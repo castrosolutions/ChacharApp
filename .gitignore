@@ -1,0 +1,42 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.profraw
+
+# IMPORTANT: do NOT ignore Package.resolved — it is versioned (pinning constraint).
+
+# macOS
+.DS_Store
+
+# Secrets (API keys for the optional remote-LLM Layer 2, etc.)
+.env
+*.local
+Secrets.plist
+
+# Downloaded WhisperKit (CoreML) models — large, not versioned
+Models/
+*.mlmodelc
+
+# Release/distribution build output (Scripts/release.sh) — signed .app, zips, dSYMs; not versioned
+dist/
+
+# Raw spike audio (personal voice data, large).
+# The spike RESULTS are versioned (docs/spike/results.md).
+docs/spike/audio/
+
+# Internal / strategic notes — kept local, NOT published to the public repo.
+docs/competitive-landscape.md
+docs/code-quality-report.md
+
+# Layer 2 benchmark notes (raw numbers + curated analysis) — kept local, NOT published.
+docs/cleanup-benchmark.md
+docs/cleanup-findings.md
+
+# Maintainer-only release/publish tooling — kept local, NOT in the public repo.
+# Contributors build from source with Scripts/install.sh; notarizing + publishing needs the
+# maintainer's Developer ID cert, notarytool profile and Cloudflare/R2 auth, none of which ship here.
+Scripts/release.sh
+Scripts/upload-r2.sh
+docs/releasing.md

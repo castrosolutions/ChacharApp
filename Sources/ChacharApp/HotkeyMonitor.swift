@@ -1,0 +1,179 @@
+import CoreGraphics
+import Foundation
+
+/// Optional diagnostics: appends to ~/chachar-diag.log only when the env var CHACHARAPP_DEBUG is
+/// set (off by default, so no disk writes during normal use).
+func chacharLog(_ message: String) {
+    guard ProcessInfo.processInfo.environment["CHACHARAPP_DEBUG"] != nil else { return }
+    let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("chachar-diag.log")
+    guard let data = "\(message)\n".data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        handle.seekToEndOfFile()
+        handle.write(data)
+    } else {
+        try? data.write(to: url)
+    }
+}
+
+/// How a push-to-talk key is detected.
+///
+/// `Codable`/`Hashable` so the configured set of triggers can be persisted in the settings store
+/// and bound to the settings UI.
+enum PushToTalkTrigger: Equatable, Hashable, Codable {
+    /// A normal key identified by keycode (e.g. F7 = 98). Detected via keyDown/keyUp and
+    /// swallowed so it doesn't also fire its usual action.
+    case key(CGKeyCode)
+    /// A modifier key identified by keycode (e.g. Right Command = 54, Right Option = 61).
+    /// Detected via flagsChanged and passed through (swallowing it would corrupt modifier state).
+    case modifier(CGKeyCode)
+}
+
+/// Global push-to-talk hotkey via a `CGEventTap`, supporting several triggers at once so the
+/// same gesture works across keyboards — e.g. F7 on the built-in keyboard plus a right-hand
+/// modifier on an external keyboard whose function row is intercepted by its own software
+/// (Logi Options+, etc.).
+///
+/// Requires Accessibility permission; `start()` returns `false` if the tap can't be created.
+/// Used on the main thread only.
+final class HotkeyMonitor {
+    private let triggers: [PushToTalkTrigger]
+    /// Hands-free: a press toggles the session on/off (release ignored). Default false = the press
+    /// starts and the release stops (classic push-to-talk).
+    private let toggleMode: Bool
+    private let onPress: () -> Void
+    private let onRelease: () -> Void
+
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+
+    /// The trigger currently holding the session open (nil = idle). Guarantees a matched
+    /// press/release pair even if another trigger fires meanwhile.
+    private var activeTrigger: PushToTalkTrigger?
+    /// Physical down-state of modifier keys, to turn toggling flagsChanged events into press/release.
+    private var modifiersDown: Set<CGKeyCode> = []
+
+    init(triggers: [PushToTalkTrigger], toggleMode: Bool = false,
+         onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+        self.triggers = triggers
+        self.toggleMode = toggleMode
+        self.onPress = onPress
+        self.onRelease = onRelease
+    }
+
+    /// Create and enable the tap. Returns `false` if the OS denied it (missing permission).
+    func start() -> Bool {
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+            | CGEventMask(1 << CGEventType.keyUp.rawValue)
+            | CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+
+        // C-compatible (non-capturing) callback: recover `self` from the userInfo pointer.
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(refcon).takeUnretainedValue()
+            return monitor.handle(type: type, event: event)
+        }
+
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            chacharLog("hotkey tap FAILED to create — Accessibility not granted")
+            return false
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        eventTap = tap
+        runLoopSource = source
+        chacharLog("hotkey tap started OK (triggers: \(triggers))")
+        return true
+    }
+
+    func stop() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap) // fully tear down the port so rebuilt monitors don't leak it
+        }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+        }
+        eventTap = nil
+        runLoopSource = nil
+    }
+
+    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // The OS can disable a tap; re-enable it and pass the event through.
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
+
+        let code = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+
+        switch type {
+        case .keyDown:
+            if triggers.contains(.key(code)) {
+                if toggleMode {
+                    // Ignore auto-repeat keyDowns so holding the key doesn't flip on/off.
+                    if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                        toggleTrigger(.key(code))
+                    }
+                } else {
+                    beginTrigger(.key(code))
+                }
+                return nil // swallow the PTT key
+            }
+        case .keyUp:
+            if triggers.contains(.key(code)) {
+                if !toggleMode { endTrigger(.key(code)) } // toggle mode ignores the release
+                return nil
+            }
+        case .flagsChanged:
+            chacharLog("flagsChanged code=\(code)")
+            if triggers.contains(.modifier(code)) {
+                // flagsChanged toggles: first event for a key = press (down), next = release (up).
+                let isDown = !modifiersDown.contains(code)
+                if isDown { modifiersDown.insert(code) } else { modifiersDown.remove(code) }
+                if toggleMode {
+                    if isDown { toggleTrigger(.modifier(code)) } // toggle on press-down only
+                } else {
+                    if isDown { beginTrigger(.modifier(code)) } else { endTrigger(.modifier(code)) }
+                }
+                // Pass modifiers through (don't swallow).
+            }
+        default:
+            break
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    /// Hands-free press: start a session if idle, or end it if this same trigger owns it. The
+    /// matching key release is ignored by the caller.
+    private func toggleTrigger(_ trigger: PushToTalkTrigger) {
+        if activeTrigger == nil {
+            beginTrigger(trigger)
+        } else if activeTrigger == trigger {
+            endTrigger(trigger)
+        }
+    }
+
+    private func beginTrigger(_ trigger: PushToTalkTrigger) {
+        guard activeTrigger == nil else { return } // ignore auto-repeat / a second trigger
+        activeTrigger = trigger
+        chacharLog("PRESS \(trigger)")
+        onPress()
+    }
+
+    private func endTrigger(_ trigger: PushToTalkTrigger) {
+        guard activeTrigger == trigger else { return }
+        activeTrigger = nil
+        chacharLog("RELEASE \(trigger)")
+        onRelease()
+    }
+}

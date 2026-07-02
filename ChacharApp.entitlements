@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Non-sandboxed, hardened-runtime app. ChacharApp's global push-to-talk (CGEventTap) and
+         cross-app text injection (Accessibility + synthetic ⌘V) require running OUTSIDE the App
+         Sandbox, which is why it can't ship on the Mac App Store (see ADR 0002 D1). There is
+         therefore no com.apple.security.app-sandbox key here. -->
+
+    <!-- Allow the hardened runtime to load the bundled Metal library and statically-linked ML
+         frameworks (MLX / WhisperKit). Commonly required by apps that bundle third-party binaries;
+         without it, a hardened-runtime app can hit library-validation failures at launch. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Microphone access. A hardened-runtime app is DENIED the mic silently — no TCC prompt, no
+         row in System Settings → Privacy & Security → Microphone — unless it carries this
+         entitlement (NSMicrophoneUsageDescription in Info.plist is not enough). Dev builds don't
+         need it because make-app.sh doesn't enable the hardened runtime. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Enable these ONLY if MLX turns out to need runtime code generation / executable memory
+         (it uses Metal on the GPU, so normally it does not). Left off to keep the surface tight:
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+    -->
+</dict>
+</plist>
