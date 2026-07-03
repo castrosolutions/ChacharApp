@@ -120,8 +120,8 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       set up; `Scripts/release.sh` builds the stripped, hardened, signed, **notarized + stapled `.dmg`**
       end-to-end (first 0.0.1 build notarized). `Scripts/upload-r2.sh` publishes it. *(These
       maintainer scripts are kept local, not in the public repo — see `.gitignore`.)*
-- [ ] **Publish the first release**: the notarized **1.1.4 `.dmg` is live on R2** at
-      `https://dl.juanpablocastro.com/releases/1.1.4/ChacharApp-1.1.4.dmg`. First-run fixes found
+- [ ] **Publish the first release**: the notarized **1.1.5 `.dmg` is live on R2** at
+      `https://dl.juanpablocastro.com/releases/1.1.5/ChacharApp-1.1.5.dmg`. First-run fixes found
       by clean-install testing: 1.1.0 added the setup guide; 1.1.1 the missing microphone
       entitlement (a hardened-runtime app without `com.apple.security.device.audio-input` is
       denied the mic silently — no prompt, no row in System Settings); 1.1.2 made the mic-grant
@@ -131,7 +131,8 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       run straight from the mounted `.dmg` (permissions granted there bind to the `/Volumes` path
       and orphan into icon-less "ChacharApp.app" TCC rows on eject); 1.1.4 fixed the setup guide
       sticking at "Downloading 100%" (straggler progress callbacks overwrote the `.ready` state,
-      leaving "Start Dictating" locked). Published at
+      leaving "Start Dictating" locked); 1.1.5 added creator credit and project links (website,
+      repository, license) to the Settings About tab. Published at
       **github.com/castrosolutions/ChacharApp** with the `.dmg` attached as a GitHub release,
       mirroring R2 (ADR 0002 D3). Remaining: validate the first-download path from a fresh macOS
       user account (careful: `/Applications` is shared across accounts, so the test account must

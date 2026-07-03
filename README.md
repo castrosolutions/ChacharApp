@@ -108,7 +108,7 @@ download a prebuilt app or compile your own.
 ### Option A — Download the app (easiest)
 
 1. Download the latest **notarized** `.dmg`:
-   [**dl.juanpablocastro.com/releases/1.1.4/ChacharApp-1.1.4.dmg**](https://dl.juanpablocastro.com/releases/1.1.4/ChacharApp-1.1.4.dmg)
+   [**dl.juanpablocastro.com/releases/1.1.5/ChacharApp-1.1.5.dmg**](https://dl.juanpablocastro.com/releases/1.1.5/ChacharApp-1.1.5.dmg)
    (mirrored on the [**Releases**](../../releases) page).
 2. Open the `.dmg` and drag **`ChacharApp.app`** into the **Applications** folder.
 3. Launch it from Applications. The build is **Developer ID-signed and notarized**, so the only
