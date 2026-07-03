@@ -333,9 +333,28 @@ private struct AboutSettingsView: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("ChacharApp", value: version)
+                HStack(spacing: 12) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ChacharApp").font(.title3.bold())
+                        Text("Version \(version)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Text("A local, free, configurable voice-dictation assistant for macOS.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                LabeledContent("Created by") {
+                    Link("Juan Pablo Castro — juanpablocastro.com",
+                         destination: URL(string: "https://juanpablocastro.com")!)
+                }
+                LabeledContent("Source code") {
+                    Link("github.com/castrosolutions/ChacharApp",
+                         destination: URL(string: "https://github.com/castrosolutions/ChacharApp")!)
+                }
+                LabeledContent("License", value: "MIT")
             }
             Section("Data locations") {
                 PathRow(label: "Vocabulary", url: VocabularyStore.defaultURL())
