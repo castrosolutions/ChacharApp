@@ -144,6 +144,14 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       setup is incomplete (first run, revoked permission, deleted model) and can be reopened from
       the status menu ("Setup Guide…"). The hotkey **arms live** when Accessibility is granted —
       `AppDelegate` polls `AXIsProcessTrusted()` and starts the `CGEventTap` on grant.
+- [x] **Homebrew distribution**: the `chacharapp` cask in the public tap
+      **`castrosolutions/homebrew-tap`** fronts the notarized R2 `.dmg` —
+      `brew install --cask castrosolutions/tap/chacharapp`. Passes `brew style` and
+      `brew audit --online`; `livecheck` follows GitHub releases; the `zap` stanza gives a full
+      uninstall (settings, vocabulary, history, downloaded models). Per-release cask bump
+      (version + sha256) is a maintainer-local script (`Scripts/update-cask.sh`, gitignored like
+      the rest of the release tooling). Graduating to the official `homebrew/cask` repo is
+      deferred until the project meets Homebrew's notability bar (ADR 0002 D3).
 - [x] Open-source hygiene, part 1: public `README` + MIT `LICENSE` (done).
 - [ ] Open-source hygiene, part 2: contribution notes; versioning; optional auto-update
       (e.g. Sparkle).

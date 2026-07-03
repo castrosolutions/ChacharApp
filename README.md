@@ -102,8 +102,8 @@ A working end-to-end vertical slice, validated on device. Development environmen
 
 ## Install
 
-Two ways to get ChacharApp — **both run 100% locally**. The only difference is whether you
-download a prebuilt app or compile your own.
+Three ways to get ChacharApp — **all run 100% locally**. The only difference is how the app
+gets onto your Mac: prebuilt via direct download or Homebrew, or compiled by you.
 
 ### Option A — Download the app (easiest)
 
@@ -119,7 +119,20 @@ download a prebuilt app or compile your own.
    **Accessibility** — both required) and downloads the speech model (~626 MB, one time). Each
    step turns green as you complete it; after that, everything runs offline.
 
-### Option B — Build from source (no download, fully auditable)
+### Option B — Homebrew
+
+The same notarized app, installed from the
+[`castrosolutions/homebrew-tap`](https://github.com/castrosolutions/homebrew-tap) tap:
+
+```sh
+brew install --cask castrosolutions/tap/chacharapp
+```
+
+Launch it from Applications and follow the setup guide (step 4 above). Update later with
+`brew upgrade --cask chacharapp`. To uninstall, `brew uninstall --cask chacharapp` — or add
+`--zap` to also remove settings, vocabulary, history and the downloaded models.
+
+### Option C — Build from source (no download, fully auditable)
 
 Prefer to run your own build? You only need Xcode and one command.
 

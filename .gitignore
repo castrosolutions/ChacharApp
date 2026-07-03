@@ -39,4 +39,5 @@ docs/cleanup-findings.md
 # maintainer's Developer ID cert, notarytool profile and Cloudflare/R2 auth, none of which ship here.
 Scripts/release.sh
 Scripts/upload-r2.sh
+Scripts/update-cask.sh
 docs/releasing.md

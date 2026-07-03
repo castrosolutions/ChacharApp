@@ -43,7 +43,10 @@ hit this because `make-app.sh` doesn't harden.
 ### D3 — Hosting: **Cloudflare R2 + GitHub Releases**
 The public repo lives on GitHub, which becomes a first-class release channel (source + notarized
 `.app`). Cloudflare R2 (zero egress on the free tier, branded URL) hosts the binary and any hosted
-model, with a landing page on Cloudflare Pages. The two channels mirror each other.
+model, with a landing page on Cloudflare Pages. The two channels mirror each other. A **Homebrew
+cask** (`chacharapp` in the public tap `castrosolutions/homebrew-tap`) fronts the same R2 `.dmg`
+for `brew install --cask` users; graduating it into the official `homebrew/cask` repo is deferred
+until the project meets Homebrew's notability bar.
 
 ### D4 — Model packaging: **download-on-first-run**
 The Whisper model is **not** bundled in the `.app`. The dev symlink in `make-app.sh` is install-only
