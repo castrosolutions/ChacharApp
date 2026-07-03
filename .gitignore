@@ -40,4 +40,6 @@ docs/cleanup-findings.md
 Scripts/release.sh
 Scripts/upload-r2.sh
 Scripts/update-cask.sh
+Scripts/analytics.py
 docs/releasing.md
+docs/download-metrics.md
