@@ -108,7 +108,7 @@ gets onto your Mac: prebuilt via direct download or Homebrew, or compiled by you
 ### Option A — Download the app (easiest)
 
 1. Download the latest **notarized** `.dmg`:
-   [**dl.juanpablocastro.com/releases/1.1.5/ChacharApp-1.1.5.dmg**](https://dl.juanpablocastro.com/releases/1.1.5/ChacharApp-1.1.5.dmg)
+   [**dl.juanpablocastro.com/releases/1.2.0/ChacharApp-1.2.0.dmg**](https://dl.juanpablocastro.com/releases/1.2.0/ChacharApp-1.2.0.dmg)
    (mirrored on the [**Releases**](../../releases) page).
 2. Open the `.dmg` and drag **`ChacharApp.app`** into the **Applications** folder.
 3. Launch it from Applications. The build is **Developer ID-signed and notarized**, so the only
@@ -119,6 +119,10 @@ gets onto your Mac: prebuilt via direct download or Homebrew, or compiled by you
    **Accessibility** — both required) and downloads the speech model (~626 MB, one time). Each
    step turns green as you complete it; after that, everything runs offline.
 
+That's the last `.dmg` you download by hand: the app offers new versions **in-app** (Sparkle),
+and always asks before checking automatically or installing anything. Updates keep your
+settings, permissions and the downloaded model.
+
 ### Option B — Homebrew
 
 The same notarized app, installed from the
@@ -128,9 +132,10 @@ The same notarized app, installed from the
 brew install --cask castrosolutions/tap/chacharapp
 ```
 
-Launch it from Applications and follow the setup guide (step 4 above). Update later with
-`brew upgrade --cask chacharapp`. To uninstall, `brew uninstall --cask chacharapp` — or add
-`--zap` to also remove settings, vocabulary, history and the downloaded models.
+Launch it from Applications and follow the setup guide (step 4 above). Updates arrive through
+the app itself (Sparkle) — or run `brew upgrade --cask chacharapp` explicitly. To uninstall,
+`brew uninstall --cask chacharapp` — or add `--zap` to also remove settings, vocabulary,
+history and the downloaded models.
 
 ### Option C — Build from source (no download, fully auditable)
 
