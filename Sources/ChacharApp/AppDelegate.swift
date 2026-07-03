@@ -52,7 +52,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum CleanupState { case idle, loading, ready, failed }
     /// `.idle` until we know whether cleanup is enabled; only enabled cleanup loads a model.
     private var cleanupState: CleanupState = .idle
-    private var cleanupMenuItem: NSMenuItem?
 
     /// Sparkle auto-updater — distribution builds only. release.sh writes the SUFeedURL +
     /// SUPublicEDKey Info.plist keys this checks for; make-app.sh (dev) omits them, so dev builds
@@ -152,7 +151,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             cleanupState = .idle
             runtimeStatus.cleanupModel = .idle
-            updateCleanupMenu()
         }
     }
 
@@ -237,7 +235,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func loadCleanupModel(_ id: String) async {
         cleanupState = .loading
         runtimeStatus.cleanupModel = .loading
-        updateCleanupMenu()
         do {
             try await cleaner.reload(modelId: id) { fraction in
                 Task { @MainActor in
@@ -253,7 +250,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cleanupState = .failed
             runtimeStatus.cleanupModel = .unavailable
         }
-        updateCleanupMenu()
     }
 
     /// Release the cleanup model when the feature is turned off, freeing its ~4–5 GB. It reloads
@@ -262,7 +258,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await cleaner.unload()
         cleanupState = .idle
         runtimeStatus.cleanupModel = .idle
-        updateCleanupMenu()
     }
 
     /// Build a push-to-talk monitor wired to the dictation loop. Extracted so startup and live
@@ -304,7 +299,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applySettings(_ settings: AppSettings) {
         let previous = appliedSettings
         appliedSettings = settings
-        updateCleanupMenu()
 
         if previous.asrLanguage != settings.asrLanguage {
             Task { await transcriber.update(language: settings.asrLanguage) }
@@ -430,21 +424,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(status)
         statusMenuItem = status
 
-        let cleanup = NSMenuItem(title: "Clean up speech (local LLM)", action: #selector(toggleCleanup), keyEquivalent: "")
-        cleanup.target = self
-        cleanup.state = settingsStore.settings.cleanupEnabled ? .on : .off
-        menu.addItem(cleanup)
-        cleanupMenuItem = cleanup
-
         menu.addItem(.separator())
 
+        // Deliberately NOT in this menu: the Layer 2 cleanup toggle (it loads a ~4–5 GB model —
+        // too heavy a side effect for a one-click menu item pressed by accident) and vocabulary
+        // editing. Both live in Settings, where the choice is explicit.
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
-
-        let editVocab = NSMenuItem(title: "Edit vocabulary…", action: #selector(openVocabulary), keyEquivalent: "")
-        editVocab.target = self
-        menu.addItem(editVocab)
 
         let guide = NSMenuItem(title: "Setup Guide…", action: #selector(openOnboarding), keyEquivalent: "")
         guide.target = self
@@ -461,6 +448,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             checkForUpdates.target = updater
             menu.addItem(checkForUpdates)
         }
+
+        // About: version at a glance + the same project links as the Settings About tab.
+        let about = NSMenuItem(title: "About ChacharApp", action: nil, keyEquivalent: "")
+        let aboutMenu = NSMenu()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        aboutMenu.addItem(NSMenuItem(title: "Version \(version) (\(build))", action: nil, keyEquivalent: ""))
+        let website = NSMenuItem(title: "Website: juanpablocastro.com", action: #selector(openWebsite), keyEquivalent: "")
+        website.target = self
+        aboutMenu.addItem(website)
+        about.submenu = aboutMenu
+        menu.addItem(about)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ChacharApp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -485,30 +484,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             vocabulary: vocabulary, asr: asrController)
     }
 
-    /// Open the editable vocabulary JSON (glossary + replacements) in the default editor.
-    @objc private func openVocabulary() {
-        NSWorkspace.shared.open(vocabulary.url)
-    }
-
     @objc private func openOnboarding() {
         onboarding.show()
     }
 
-    @objc private func toggleCleanup() {
-        settingsStore.settings.cleanupEnabled.toggle() // persisted by the store; UI/menu refresh follows
-        updateCleanupMenu()
-    }
-
-    private func updateCleanupMenu() {
-        cleanupMenuItem?.state = settingsStore.settings.cleanupEnabled ? .on : .off
-        let suffix: String
-        switch cleanupState {
-        case .idle: suffix = ""
-        case .loading: suffix = " (loading…)"
-        case .ready: suffix = ""
-        case .failed: suffix = " (unavailable)"
-        }
-        cleanupMenuItem?.title = "Clean up speech (local LLM)" + suffix
+    @objc private func openWebsite() {
+        NSWorkspace.shared.open(URL(string: "https://juanpablocastro.com/en/projects/chacharapp/")!)
     }
 
     private func promptAccessibility() {
