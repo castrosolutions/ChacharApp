@@ -58,6 +58,9 @@ jargon and Spanish↔English code-switching.
   on, instant) → Layer 2 local MLX LLM cleanup (opt-in, off by default; default model
   `mlx-community/Qwen2.5-7B-Instruct-4bit`, any MLX instruct id selectable).
 - **Injection**: clipboard + synthetic ⌘V (CGEvent), saving/restoring the user's clipboard.
+- **Updates**: Sparkle 2 in distribution builds only (appcast on R2, EdDSA-signed). Dev builds
+  intentionally omit `SUFeedURL`, so they never check or offer updates —
+  [`decisions/0002`](decisions/0002-distribution-and-packaging.md) D9.
 
 ## Build / run
 - `./Scripts/install.sh` — build the real app (xcodebuild) and install to /Applications.

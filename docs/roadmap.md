@@ -152,9 +152,16 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       (version + sha256) is a maintainer-local script (`Scripts/update-cask.sh`, gitignored like
       the rest of the release tooling). Graduating to the official `homebrew/cask` repo is
       deferred until the project meets Homebrew's notability bar (ADR 0002 D3).
+- [x] **In-app auto-updates (Sparkle 2)**: distribution builds embed Sparkle 2 (SPM, pinned
+      2.9.x) with a "Check for Updates…" status-menu item; the appcast lives at the stable
+      `dl.juanpablocastro.com/releases/appcast.xml` next to the dmgs, with each release's
+      enclosure EdDSA-signed (private key only in the maintainer's Keychain). No silent
+      updates: Sparkle asks before enabling scheduled checks and before installing. Dev builds
+      stay update-free by design — `make-app.sh` writes no `SUFeedURL`, so the updater never
+      instantiates (ADR 0002 D9). Full flow verified against a localhost appcast: check →
+      offer → install → relaunch, signature and TCC-relevant identity intact.
 - [x] Open-source hygiene, part 1: public `README` + MIT `LICENSE` (done).
-- [ ] Open-source hygiene, part 2: contribution notes; versioning; optional auto-update
-      (e.g. Sparkle).
+- [ ] Open-source hygiene, part 2: contribution notes; versioning.
 
 ### F. Polish & robustness
 - [x] **Microphone privacy mode** — setting to open the mic only while the PTT key is held, so

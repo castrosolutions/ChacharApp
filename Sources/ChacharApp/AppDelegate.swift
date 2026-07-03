@@ -4,6 +4,7 @@ import AVFoundation
 import ChacharCleanupMLX
 import ChacharCore
 import Combine
+import Sparkle
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -52,6 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `.idle` until we know whether cleanup is enabled; only enabled cleanup loads a model.
     private var cleanupState: CleanupState = .idle
     private var cleanupMenuItem: NSMenuItem?
+
+    /// Sparkle auto-updater — distribution builds only. release.sh writes the SUFeedURL +
+    /// SUPublicEDKey Info.plist keys this checks for; make-app.sh (dev) omits them, so dev builds
+    /// never check for or offer updates (contributors update via git, and the appcast's release
+    /// bundle wouldn't match the dev bundle id anyway). Sparkle asks the user before enabling
+    /// scheduled checks and before installing anything — no silent updates.
+    private let updater: SPUStandardUpdaterController? =
+        Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
+            ? SPUStandardUpdaterController(
+                startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+            : nil
 
     override init() {
         transcriber = WhisperKitTranscriber(
@@ -437,6 +449,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let guide = NSMenuItem(title: "Setup Guide…", action: #selector(openOnboarding), keyEquivalent: "")
         guide.target = self
         menu.addItem(guide)
+
+        // Only distribution builds carry an update feed (see `updater`); Sparkle's controller
+        // validates the item itself (disabled while a check is already running).
+        if let updater {
+            let checkForUpdates = NSMenuItem(
+                title: "Check for Updates…",
+                action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+                keyEquivalent: ""
+            )
+            checkForUpdates.target = updater
+            menu.addItem(checkForUpdates)
+        }
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ChacharApp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))

@@ -41,6 +41,20 @@ for bundle in "$PRODUCTS"/*.bundle; do
     [ -e "$bundle" ] && cp -R "$bundle" "$CONTENTS/Resources/"
 done
 
+# Embed Sparkle.framework and point the executable's @rpath at Contents/Frameworks. The binary
+# links Sparkle unconditionally (SPM binary target), so dyld needs the framework even in dev
+# builds — but this script writes no SUFeedURL key, so the updater stays dormant (see
+# AppDelegate.updater). Sparkle ships validly signed by the Sparkle project; a non-hardened dev
+# build can load it as-is, no re-sign needed.
+SPARKLE_FW="$(/usr/bin/find "$DERIVED/SourcePackages/artifacts" -type d -name Sparkle.framework \
+    -path '*macos*' -print -quit 2>/dev/null)"
+[ -n "$SPARKLE_FW" ] || { echo "Sparkle.framework not found under $DERIVED/SourcePackages/artifacts" >&2; exit 1; }
+mkdir -p "$CONTENTS/Frameworks"
+cp -R "$SPARKLE_FW" "$CONTENTS/Frameworks/"
+if ! otool -l "$CONTENTS/MacOS/chacharapp" | grep -q '@executable_path/\.\./Frameworks'; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" "$CONTENTS/MacOS/chacharapp"
+fi
+
 # Symlink the local Whisper model into the bundle (codesign seals the symlink, not the 600 MB).
 ln -sfn "$ROOT/Models" "$CONTENTS/Resources/Models"
 

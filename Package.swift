@@ -27,6 +27,13 @@ let package = Package(
             url: "https://github.com/ml-explore/mlx-swift-examples.git",
             .upToNextMinor(from: "2.29.1")
         ),
+        // Sparkle 2: in-app auto-updates for the notarized direct-download channel (appcast on
+        // R2, EdDSA-signed). Only release.sh builds enable it — dev builds omit the SUFeedURL/
+        // SUPublicEDKey Info.plist keys. Pin to 2.9.x; never upToNextMajor.
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle.git",
+            .upToNextMinor(from: "2.9.4")
+        ),
     ],
     targets: [
         .target(
@@ -44,7 +51,14 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
             ]
         ),
-        .executableTarget(name: "ChacharApp", dependencies: ["ChacharCore", "ChacharCleanupMLX"]),
+        .executableTarget(
+            name: "ChacharApp",
+            dependencies: [
+                "ChacharCore",
+                "ChacharCleanupMLX",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
+        ),
         .executableTarget(name: "ChacharSpike", dependencies: ["ChacharCore"]),
         // Layer 2 cleanup benchmark — links MLX, so it must be built with xcodebuild (metallib).
         .executableTarget(name: "ChacharBench", dependencies: ["ChacharCore", "ChacharCleanupMLX"]),

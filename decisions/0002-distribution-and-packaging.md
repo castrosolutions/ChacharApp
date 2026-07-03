@@ -81,6 +81,17 @@ capable machines and offer smaller WhisperKit models (base/small/distil) for wea
 minimum requirement in the README. The device/RAM matrix that informs the tiers lives in
 [`../docs/device-support.md`](../docs/device-support.md).
 
+### D9 — In-app updates: **Sparkle 2 over the same R2 channel**
+Direct-download users get updates in-app via **Sparkle 2**, the de-facto standard for non-MAS macOS
+apps. The appcast lives at the stable `releases/appcast.xml` key on R2 next to the versioned dmgs,
+and each release's enclosure is **EdDSA-signed** — the private key exists only in the maintainer's
+Keychain; the public key ships in the app's Info.plist (`SUPublicEDKey`). User control is preserved:
+Sparkle asks before enabling scheduled checks and asks again before installing anything — no silent
+updates. Only distribution builds carry the feed; dev builds omit the `SUFeedURL`/`SUPublicEDKey`
+keys entirely, so they never check or offer updates (contributors update via git, and the release
+bundle wouldn't match the dev bundle id anyway). From 1.2.0 on, the Homebrew cask declares
+`auto_updates true`, so plain `brew upgrade` defers to Sparkle instead of fighting it.
+
 ## Consequences / next steps
 - Add the MIT `LICENSE` (done) and a public `README` (done).
 - Simplify `release.sh` (done): kept the symbol **strip** + **dSYM** archiving; dropped the
