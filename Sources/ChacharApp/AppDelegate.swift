@@ -132,7 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 3) Global push-to-talk hotkey (needs Accessibility permission).
         if hotkey == nil { // may already exist if a settings change rebuilt it during startup
-            let monitor = makeHotkeyMonitor(Array(settingsStore.settings.pttTriggers))
+            let monitor = makeHotkeyMonitor(Array(settingsStore.settings.pttTriggers),
+                                            toggleMode: settingsStore.settings.pttToggleMode)
             if monitor.start() {
                 hotkey = monitor
                 setStatus("Ready — hold your push-to-talk key")
@@ -262,10 +263,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Build a push-to-talk monitor wired to the dictation loop. Extracted so startup and live
     /// reconfiguration share the same callbacks.
-    private func makeHotkeyMonitor(_ triggers: [PushToTalkTrigger]) -> HotkeyMonitor {
+    ///
+    /// `triggers` and `toggleMode` are passed in rather than read back from `settingsStore`: when a
+    /// live change arrives, `applySettings` runs inside the `@Published` publisher's `willSet`, so
+    /// `settingsStore.settings` still holds the *old* value at that instant. Reading it here would
+    /// rebuild the monitor with the stale toggle mode — the change would only "take" after a relaunch
+    /// (which reads the persisted value at startup). Threading the fresh values through avoids that.
+    private func makeHotkeyMonitor(_ triggers: [PushToTalkTrigger], toggleMode: Bool) -> HotkeyMonitor {
         HotkeyMonitor(
             triggers: triggers,
-            toggleMode: settingsStore.settings.pttToggleMode,
+            toggleMode: toggleMode,
             onPress: { MainActor.assumeIsolated { self.dictation.press() } },
             onRelease: { MainActor.assumeIsolated { self.dictation.release() } }
         )
@@ -316,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await unloadCleanupModel() }
         }
         if previous.pttTriggers != settings.pttTriggers || previous.pttToggleMode != settings.pttToggleMode {
-            rebuildHotkey(Array(settings.pttTriggers))
+            rebuildHotkey(Array(settings.pttTriggers), toggleMode: settings.pttToggleMode)
         }
         if previous.micOnlyWhileDictating != settings.micOnlyWhileDictating {
             // Apply immediately: release the warm mic now, or re-warm it.
@@ -330,9 +337,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func rebuildHotkey(_ triggers: [PushToTalkTrigger]) {
+    private func rebuildHotkey(_ triggers: [PushToTalkTrigger], toggleMode: Bool) {
         hotkey?.stop()
-        let monitor = makeHotkeyMonitor(triggers)
+        let monitor = makeHotkeyMonitor(triggers, toggleMode: toggleMode)
         if monitor.start() {
             hotkey = monitor
             chacharLog("hotkey rebuilt with \(triggers)")
@@ -354,7 +361,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
                 guard AXIsProcessTrusted() else { continue }
-                self.rebuildHotkey(Array(self.settingsStore.settings.pttTriggers))
+                self.rebuildHotkey(Array(self.settingsStore.settings.pttTriggers),
+                                   toggleMode: self.settingsStore.settings.pttToggleMode)
                 if self.hotkey != nil { self.setStatus("Ready — hold your push-to-talk key") }
                 return
             }
