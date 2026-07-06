@@ -35,13 +35,12 @@ public struct Vocabulary: Codable, Sendable, Equatable {
         return terms.isEmpty ? nil : terms.joined(separator: ", ")
     }
 
-    /// A starter vocabulary written on first run so the file shows the format and is useful.
+    /// A starter vocabulary written on first run, so a fresh install already knows the app's own name
+    /// and the file demonstrates the format. Deliberately minimal — only "ChacharApp". Every other
+    /// term is the user's to add: generic tech words risk phonetic collisions with common Spanish
+    /// words (the Layer 1 fuzzy matcher would "correct" the everyday word into the term — "macOS" once
+    /// hijacked "manos", which is why it isn't here).
     public static let seed = Vocabulary(
-        glossary: ["AWS", "S3", "Kubernetes", "i3", "WhisperKit", "SwiftPM", "Xcode",
-                   "CoreML", "ANE", "macOS", "Argmax", "MLX"],
-        replacements: [
-            Replacement(from: "cubernetes", to: "Kubernetes"),
-            Replacement(from: "ese tres", to: "S3"),
-        ]
+        glossary: ["ChacharApp"]
     )
 }
