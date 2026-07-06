@@ -149,11 +149,25 @@ private struct CleanupSettingsView: View {
     var body: some View {
         Form {
             Section {
+                Text("Cleanup is an optional second pass that runs a local language model over the "
+                     + "recognized text — it removes fillers (\"um\", \"eh\") and applies the spoken "
+                     + "self-corrections you say out loud (\"no, I mean…\") for a cleaner result.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("It's off by default because it's demanding: it downloads and keeps its own "
+                     + "multi-gigabyte model in memory, adds a few seconds to every dictation, and "
+                     + "uses noticeable CPU and RAM while active. Turn it on for the extra polish "
+                     + "when your Mac can spare the resources — it still runs 100% on-device.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: {
+                Text("About cleanup")
+            }
+
+            Section {
                 Toggle("Clean up speech with a local LLM", isOn: $store.settings.cleanupEnabled)
                 LabeledContent("Model status") { statusLabel }
             } footer: {
-                Text("When on, a local model removes fillers and applies your spoken self-corrections "
-                     + "(\"no, I mean…\"). Costs a few seconds per phrase; off is the fastest path.")
+                Text("While on, every dictation is sent through the cleanup model before it's "
+                     + "inserted. “Model status” shows whether that model is loaded and ready.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -206,6 +220,9 @@ private struct HistorySettingsView: View {
         VStack(spacing: 0) {
             Form {
                 Section {
+                    Text("A searchable log of your past dictations — both the raw recognition and "
+                         + "the final inserted text — so you can revisit or re-copy anything you've said.")
+                        .font(.callout).foregroundStyle(.secondary)
                     Toggle("Record dictation history", isOn: $store.settings.historyEnabled)
                     LabeledContent("Keep most recent") {
                         HStack {
@@ -221,7 +238,7 @@ private struct HistorySettingsView: View {
                 }
             }
             .formStyle(.grouped)
-            .frame(height: 150)
+            .frame(height: 190)
 
             Divider()
 
@@ -455,6 +472,19 @@ private struct ModelsSettingsView: View {
     var body: some View {
         Form {
             Section {
+                Text("Models are the on-device engines ChacharApp runs. The speech-recognition "
+                     + "(ASR) model turns your voice into text and is always used — the default "
+                     + "downloads on first run.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("The cleanup model powers the optional Cleanup pass and is only loaded when "
+                     + "you enable that feature. Download curated alternatives or import your own; "
+                     + "everything stays local.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: {
+                Text("About models")
+            }
+
+            Section {
                 Button { asr.select(path: "") } label: {
                     ASRModelRow(name: ASRModelController.bundledName,
                                 subtitle: "626 MB · RTF 0.10–0.15× · downloaded on first run",
@@ -657,6 +687,19 @@ private struct VocabularySettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
+                Section {
+                    Text("Vocabulary teaches ChacharApp your personal terms so it writes them "
+                         + "correctly. Recognition leans toward the canonical spellings in your "
+                         + "glossary, and phonetic matching catches their mishearings "
+                         + "(e.g. \"cubernetes\" → \"Kubernetes\").")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Text("Replacements are exact find-and-replace rules applied to every "
+                         + "transcription. It all runs instantly and on-device (Layer 1).")
+                        .font(.callout).foregroundStyle(.secondary)
+                } header: {
+                    Text("About vocabulary")
+                }
+
                 Section {
                     ForEach($model.terms) { $item in
                         HStack {
