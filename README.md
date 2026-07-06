@@ -108,7 +108,7 @@ gets onto your Mac: prebuilt via direct download or Homebrew, or compiled by you
 ### Option A — Download the app (easiest)
 
 1. Download the latest **notarized** `.dmg`:
-   [**dl.juanpablocastro.com/releases/1.2.1/ChacharApp-1.2.1.dmg**](https://dl.juanpablocastro.com/releases/1.2.1/ChacharApp-1.2.1.dmg)
+   [**dl.juanpablocastro.com/releases/1.2.2/ChacharApp-1.2.2.dmg**](https://dl.juanpablocastro.com/releases/1.2.2/ChacharApp-1.2.2.dmg)
    (mirrored on the [**Releases**](../../releases) page).
 2. Open the `.dmg` and drag **`ChacharApp.app`** into the **Applications** folder.
 3. Launch it from Applications. The build is **Developer ID-signed and notarized**, so the only
