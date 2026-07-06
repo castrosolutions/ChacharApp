@@ -104,6 +104,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await startUp() }
     }
 
+    /// Rescue path for when the menu-bar icon is hidden. macOS clips third-party status items when
+    /// the bar runs out of room (a wide app menu, many extras, or the notch), and there's no API to
+    /// force one visible — so the icon can silently disappear on some displays. Relaunching the app
+    /// from Finder/Spotlight while it's already running sends a reopen event here; route it to a real
+    /// window (which flips the app to `.regular`, so a Dock icon appears too). Dictation itself never
+    /// needs the icon — the push-to-talk key works regardless — so this only restores access to the
+    /// settings/setup surfaces. Returns true: we've handled the reopen ourselves.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if onboarding.isVisible {
+            onboarding.show() // mid first-run setup — bring that guide back rather than jump to Settings
+        } else {
+            openSettings()
+        }
+        return true
+    }
+
     private func startUp() async {
         chacharLog("startUp begin — AXIsProcessTrusted=\(AXIsProcessTrusted())")
         // 0) Setup guide, shown before the mic prompt fires so the user has context for it.
