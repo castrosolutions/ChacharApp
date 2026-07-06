@@ -70,11 +70,26 @@ public final class MicrophoneCapture: @unchecked Sendable {
         }
         self.converter = converter
 
+        // Remove any tap left over from a previous start that failed *after* installing the tap
+        // (e.g. `engine.start()` below threw and unwound before `isRunning` was set). Installing a
+        // tap on a bus that already has one raises an Objective-C `NSException` — which no Swift
+        // `try?`/`do-catch` can catch — and aborts the process (this is the SIGABRT in
+        // DictationController.press). `removeTap` is a safe no-op when there is no tap, so doing it
+        // unconditionally here makes tap installation idempotent and the double-tap crash impossible.
+        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.process(buffer)
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // Don't leave the freshly-installed tap dangling if the engine won't start: otherwise the
+            // next start() would see `isRunning == false` with a tap still installed and crash on the
+            // installTap above.
+            input.removeTap(onBus: 0)
+            throw error
+        }
         isRunning = true
     }
 

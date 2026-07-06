@@ -137,8 +137,20 @@ final class HotkeyMonitor {
         case .flagsChanged:
             chacharLog("flagsChanged code=\(code)")
             if triggers.contains(.modifier(code)) {
-                // flagsChanged toggles: first event for a key = press (down), next = release (up).
-                let isDown = !modifiersDown.contains(code)
+                // Read the modifier's *actual* down-state from the event's device-dependent flag
+                // bit, not from event parity. A parity counter ("first event = down, next = up")
+                // inverts permanently the moment the OS drops a single flagsChanged — which it does
+                // whenever the tap is disabled by timeout (busy main thread) or coalesces events —
+                // flipping push-to-talk so the mic opens on release and stays on at rest. Reading the
+                // real bit is self-healing: a lost event just means the next one re-reads the truth.
+                let isDown: Bool
+                if let bit = Self.deviceFlag(forModifier: code) {
+                    isDown = event.flags.contains(bit)
+                } else {
+                    // Modifiers without a device-dependent bit we map (Fn, Caps Lock): fall back to
+                    // the parity heuristic. These are not realistic push-to-talk triggers.
+                    isDown = !modifiersDown.contains(code)
+                }
                 if isDown { modifiersDown.insert(code) } else { modifiersDown.remove(code) }
                 if toggleMode {
                     if isDown { toggleTrigger(.modifier(code)) } // toggle on press-down only
@@ -175,5 +187,23 @@ final class HotkeyMonitor {
         activeTrigger = nil
         chacharLog("RELEASE \(trigger)")
         onRelease()
+    }
+
+    /// The device-dependent modifier bit a `flagsChanged` event carries when the given left/right
+    /// modifier keycode is physically down. These low bits (unlike the generic `.maskCommand` etc.)
+    /// distinguish left from right, letting us read a modifier trigger's true state from `event.flags`
+    /// instead of inferring it from event parity. Values are the NX device-dependent masks.
+    private static func deviceFlag(forModifier keycode: CGKeyCode) -> CGEventFlags? {
+        switch keycode {
+        case 59: return CGEventFlags(rawValue: 0x0000_0001) // Left Control
+        case 62: return CGEventFlags(rawValue: 0x0000_2000) // Right Control
+        case 56: return CGEventFlags(rawValue: 0x0000_0002) // Left Shift
+        case 60: return CGEventFlags(rawValue: 0x0000_0004) // Right Shift
+        case 55: return CGEventFlags(rawValue: 0x0000_0008) // Left Command
+        case 54: return CGEventFlags(rawValue: 0x0000_0010) // Right Command
+        case 58: return CGEventFlags(rawValue: 0x0000_0020) // Left Option
+        case 61: return CGEventFlags(rawValue: 0x0000_0040) // Right Option
+        default: return nil                                 // Fn, Caps Lock, unknown
+        }
     }
 }
