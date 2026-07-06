@@ -16,7 +16,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var vocabularyViewModel: VocabularyViewModel?
 
     func show(store: SettingsStore, status: RuntimeStatus, history: HistoryStore,
-              vocabulary: VocabularyStore, asr: ASRModelController) {
+              vocabulary: VocabularyStore, asr: ASRModelController, updates: UpdatesController) {
         // Surface as a regular app so the Dock icon + menu bar appear while configuring.
         installMainMenuIfNeeded()
         NSApp.setActivationPolicy(.regular)
@@ -34,7 +34,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let vocabModel = VocabularyViewModel(store: vocabulary)
         vocabularyViewModel = vocabModel
         let root = SettingsView(store: store, status: status, history: viewModel,
-                                vocabulary: vocabModel, asr: asr)
+                                vocabulary: vocabModel, asr: asr, updates: updates)
         let hosting = NSHostingController(rootView: root)
         let win = NSWindow(contentViewController: hosting)
         win.title = "ChacharApp Settings"

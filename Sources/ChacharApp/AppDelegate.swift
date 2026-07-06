@@ -45,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status: runtimeStatus,
         activate: { [weak self] path in _ = await self?.loadASRModel(path: path) }
     )
+    /// Surfaces Sparkle's update controls (check now / auto-check / last-checked) in the settings
+    /// Updates tab, so updating never depends on the menu-bar icon. Wraps `updater` — nil in dev.
+    private lazy var updatesController = UpdatesController(controller: updater)
     private var settingsCancellable: AnyCancellable?
     /// Last settings applied to the running app, for diffing incoming changes.
     private var appliedSettings = AppSettings()
@@ -505,7 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         settingsWindow.show(store: settingsStore, status: runtimeStatus, history: history,
-                            vocabulary: vocabulary, asr: asrController)
+                            vocabulary: vocabulary, asr: asrController, updates: updatesController)
     }
 
     @objc private func openOnboarding() {

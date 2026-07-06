@@ -9,12 +9,16 @@ struct SettingsView: View {
     @ObservedObject var history: HistoryViewModel
     @ObservedObject var vocabulary: VocabularyViewModel
     @ObservedObject var asr: ASRModelController
+    @ObservedObject var updates: UpdatesController
 
     @State private var selection: Tab = .general
 
     private enum Tab: String, CaseIterable, Identifiable {
-        case general = "General", cleanup = "Cleanup", models = "Models"
-        case vocabulary = "Vocabulary", history = "History", about = "About"
+        // Ordered by how often they're used: History and Vocabulary are day-to-day, Models and
+        // Cleanup are set-once, Updates/About are rare.
+        case general = "General", history = "History", vocabulary = "Vocabulary"
+        case models = "Models", cleanup = "Cleanup"
+        case updates = "Updates", about = "About"
         var id: Self { self }
     }
 
@@ -41,10 +45,11 @@ struct SettingsView: View {
     @ViewBuilder private var content: some View {
         switch selection {
         case .general: GeneralSettingsView(store: store)
-        case .cleanup: CleanupSettingsView(store: store, status: status)
-        case .models: ModelsSettingsView(store: store, status: status, asr: asr)
-        case .vocabulary: VocabularySettingsView(model: vocabulary)
         case .history: HistorySettingsView(store: store, history: history)
+        case .vocabulary: VocabularySettingsView(model: vocabulary)
+        case .models: ModelsSettingsView(store: store, status: status, asr: asr)
+        case .cleanup: CleanupSettingsView(store: store, status: status)
+        case .updates: UpdatesSettingsView(updates: updates)
         case .about: AboutSettingsView()
         }
     }
@@ -317,6 +322,57 @@ private struct ContentUnavailablePlaceholder: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Updates
+
+/// Software-update pane: manual check, auto-check toggle and last-checked date, so updating never
+/// depends on the menu-bar icon (which macOS can hide when the bar is full or under the notch). In
+/// dev builds (no Sparkle feed) it explains that updates come from a reinstall instead.
+private struct UpdatesSettingsView: View {
+    @ObservedObject var updates: UpdatesController
+
+    var body: some View {
+        Form {
+            if updates.isEnabled {
+                Section {
+                    LabeledContent("Current version", value: updates.currentVersion)
+                    LabeledContent("Last checked", value: lastCheckedText)
+                    Button("Check for Updates…") { updates.checkForUpdates() }
+                        .disabled(!updates.canCheckForUpdates)
+                } footer: {
+                    Text("Checks the maintainer's signed update feed and walks you through "
+                         + "installing a newer version. Also available from the menu-bar icon.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Toggle("Automatically check for updates",
+                           isOn: $updates.automaticallyChecksForUpdates)
+                } footer: {
+                    Text("When on, ChacharApp checks for a new version in the background and tells "
+                         + "you — no need to open this window or reach the menu-bar icon.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    LabeledContent("Current version", value: updates.currentVersion)
+                } footer: {
+                    Text("This is a development build (built from source), so it doesn't receive "
+                         + "automatic updates — update by pulling the latest code and reinstalling. "
+                         + "Notarized release builds show the update controls here.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { updates.refresh() }
+    }
+
+    private var lastCheckedText: String {
+        guard let date = updates.lastCheckDate else { return "Never" }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 
