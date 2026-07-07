@@ -15,10 +15,10 @@ struct SettingsView: View {
 
     private enum Tab: String, CaseIterable, Identifiable {
         // Ordered by how often they're used: History and Vocabulary are day-to-day, Models and
-        // Cleanup are set-once, Updates/About are rare.
+        // Cleanup are set-once, Updates/Feedback/About are rare.
         case general = "General", history = "History", vocabulary = "Vocabulary"
         case models = "Models", cleanup = "Cleanup"
-        case updates = "Updates", about = "About"
+        case updates = "Updates", feedback = "Feedback", about = "About"
         var id: Self { self }
     }
 
@@ -50,6 +50,7 @@ struct SettingsView: View {
         case .models: ModelsSettingsView(store: store, status: status, asr: asr)
         case .cleanup: CleanupSettingsView(store: store, status: status)
         case .updates: UpdatesSettingsView(updates: updates)
+        case .feedback: FeedbackSettingsView(store: store, asr: asr)
         case .about: AboutSettingsView()
         }
     }
@@ -390,6 +391,195 @@ private struct UpdatesSettingsView: View {
     private var lastCheckedText: String {
         guard let date = updates.lastCheckDate else { return "Never" }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+// MARK: - Feedback
+
+/// Feedback pane: pick what the feedback is about, review the (non-private) diagnostics that will be
+/// attached, then open a pre-filled form to send it — no account and no configured mail client
+/// required. The message itself is written in the destination (a hosted Tally form, or a GitHub issue
+/// for those who prefer it); the app only pre-fills the category and diagnostics. Living here (not
+/// only in the menu-bar menu) means reaching the maintainer never depends on the status-bar icon,
+/// which macOS can hide when the bar is full or under the notch.
+///
+/// Privacy: the app never sends anything on its own. Dictation stays 100% local; the only thing that
+/// leaves the machine is what the user types into the form and submits there.
+private struct FeedbackSettingsView: View {
+    @ObservedObject var store: SettingsStore
+    @ObservedObject var asr: ASRModelController
+
+    @State private var category: FeedbackCategory = .bug
+    @State private var includeDiagnostics = true
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Found a bug, want a feature, or just have a thought? This is how you reach the "
+                     + "maintainer. ChacharApp is a free, open-source project, and feedback is what "
+                     + "shapes it.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("You write your message in a short form that opens in your browser — no account "
+                     + "needed. Dictation always stays on your Mac; the only thing sent is what you "
+                     + "type into that form and submit.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: {
+                Text("About feedback")
+            }
+
+            Section {
+                Picker("What's this about?", selection: $category) {
+                    ForEach(FeedbackCategory.allCases) { Text($0.label).tag($0) }
+                }
+            }
+
+            Section {
+                Toggle("Attach app & system info", isOn: $includeDiagnostics)
+                if includeDiagnostics {
+                    Text(diagnostics)
+                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("Helps pin down bugs. No transcriptions, no audio, no personal data — only the "
+                     + "app version, your macOS version, hardware and which models are active. It's "
+                     + "pre-filled into the form for you.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Button { open(report.formURL) } label: {
+                    Label("Send feedback", systemImage: "paperplane")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button { open(report.githubURL) } label: {
+                    Label("Open a GitHub issue instead", systemImage: "ladybug")
+                }
+                .buttonStyle(.link)
+            } footer: {
+                Text("“Send feedback” opens a short form in your browser (no account needed); you "
+                     + "write your message there and submit. Prefer GitHub? It's public and "
+                     + "searchable, and needs a GitHub account.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var report: FeedbackReport {
+        FeedbackReport(category: category, diagnostics: includeDiagnostics ? diagnostics : nil)
+    }
+
+    /// Non-private context that helps triage a report: never any transcription, audio or personal data.
+    private var diagnostics: String {
+        let info = Bundle.main.infoDictionary
+        let version = "\(info?["CFBundleShortVersionString"] as? String ?? "—") "
+            + "(\(info?["CFBundleVersion"] as? String ?? "—"))"
+        let asrModel = asr.isBundledActive
+            ? "\(ASRModelController.bundledName) (bundled)"
+            : (asr.installed.first { $0.path == asr.activePath }?.name ?? "custom")
+        let cleanup = store.settings.cleanupEnabled
+            ? "on · \(ModelCatalog.cleanupModel(id: store.settings.cleanupModelId)?.name ?? store.settings.cleanupModelId)"
+            : "off"
+        return """
+        ChacharApp: \(version)
+        macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
+        Hardware: \(FeedbackReport.hardwareModel())
+        ASR model: \(asrModel)
+        Cleanup: \(cleanup)
+        """
+    }
+
+    private func open(_ url: URL?) {
+        guard let url else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
+private enum FeedbackCategory: String, CaseIterable, Identifiable {
+    case bug, feature, general
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .bug: return "Bug report"
+        case .feature: return "Feature request"
+        case .general: return "General feedback"
+        }
+    }
+
+    /// Prefix in the GitHub issue title so reports are grouped even when the sender can't set labels.
+    var titlePrefix: String {
+        switch self {
+        case .bug: return "[Bug]"
+        case .feature: return "[Feature]"
+        case .general: return "[Feedback]"
+        }
+    }
+}
+
+/// Builds the pre-filled URLs the Feedback tab opens: a hosted Tally form (the default — no account
+/// needed) and a GitHub issue (for those who prefer it). Pure value type — no side effects, no
+/// network. Opening the URL hands the draft to the browser; the user writes the message and submits
+/// it there.
+private struct FeedbackReport {
+    let category: FeedbackCategory
+    /// The diagnostics block to attach, or nil when the user opted out.
+    let diagnostics: String?
+
+    /// Change here if the repository moves; keeps GitHub and any docs pointing at one place.
+    static let repository = "castrosolutions/ChacharApp"
+    /// Tally form id (the part after tally.so/r/). The form must expose two pre-fill keys: `type`
+    /// (a dropdown whose option labels match FeedbackCategory.label) and `diagnostics` (a hidden
+    /// field that receives the block below).
+    static let tallyFormID = "rjW2DR"
+
+    /// Hosted form, pre-filled with the category and diagnostics. The user writes the message and
+    /// (optionally) their email in the form, then submits.
+    var formURL: URL? {
+        var components = URLComponents(string: "https://tally.so/r/\(Self.tallyFormID)")
+        var items = [URLQueryItem(name: "type", value: category.label)]
+        if let diagnostics {
+            items.append(URLQueryItem(name: "diagnostics", value: diagnostics))
+        }
+        components?.queryItems = items
+        return components?.url
+    }
+
+    var githubURL: URL? {
+        var components = URLComponents(string: "https://github.com/\(Self.repository)/issues/new")
+        components?.queryItems = [
+            URLQueryItem(name: "title", value: "\(category.titlePrefix) "),
+            URLQueryItem(name: "body", value: githubBody),
+        ]
+        return components?.url
+    }
+
+    /// The user types their description above the fold; the HTML comment renders invisibly on GitHub,
+    /// and the diagnostics (when attached) are fenced as a code block.
+    private var githubBody: String {
+        let prompt = "<!-- Describe your feedback here. -->"
+        guard let diagnostics else { return prompt }
+        return "\(prompt)\n\n---\n**App & system info**\n\n```\n\(diagnostics)\n```"
+    }
+
+    /// Board identifier (e.g. "Mac15,3") plus architecture — enough to reproduce hardware-specific
+    /// issues without any marketing-name lookup.
+    static func hardwareModel() -> String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        guard size > 0 else { return "unknown" }
+        var buffer = [UInt8](repeating: 0, count: size)
+        sysctlbyname("hw.model", &buffer, &size, nil, 0)
+        let model = String(decoding: buffer.prefix { $0 != 0 }, as: UTF8.self)
+        #if arch(arm64)
+        return "\(model) (arm64)"
+        #else
+        return "\(model) (x86_64)"
+        #endif
     }
 }
 
