@@ -120,8 +120,8 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       set up; `Scripts/release.sh` builds the stripped, hardened, signed, **notarized + stapled `.dmg`**
       end-to-end (first 0.0.1 build notarized). `Scripts/upload-r2.sh` publishes it. *(These
       maintainer scripts are kept local, not in the public repo — see `.gitignore`.)*
-- [ ] **Publish the first release**: the notarized **1.2.2 `.dmg` is live on R2** at
-      `https://dl.juanpablocastro.com/releases/1.2.2/ChacharApp-1.2.2.dmg`. First-run fixes found
+- [ ] **Publish the first release**: the notarized **1.3.0 `.dmg` is live on R2** at
+      `https://dl.juanpablocastro.com/releases/1.3.0/ChacharApp-1.3.0.dmg`. First-run fixes found
       by clean-install testing: 1.1.0 added the setup guide; 1.1.1 the missing microphone
       entitlement (a hardened-runtime app without `com.apple.security.device.audio-input` is
       denied the mic silently — no prompt, no row in System Settings); 1.1.2 made the mic-grant
@@ -138,7 +138,11 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       the first update delivered in-app over Sparkle; 1.2.2 made the hands-free toggle apply live
       (it only took effect after relaunch — an `@Published` `willSet` stale-read rebuilt the hotkey
       with the old value) and trimmed the factory vocabulary seed to just "ChacharApp" (dropping
-      "macOS", which the fuzzy phonetic matcher confused with the Spanish word "manos"). Published at
+      "macOS", which the fuzzy phonetic matcher confused with the Spanish word "manos"); 1.3.0
+      reworked Settings — a new **Updates** tab (in-app check + release history), a **Feedback** tab
+      (Tally form + GitHub issue), per-tab intro text on Cleanup/Models/Vocabulary/History, tabs
+      reordered by usage, and reopening the app now opens Settings when the menu-bar icon is hidden.
+      Published at
       **github.com/castrosolutions/ChacharApp** with the `.dmg` attached as a GitHub release,
       mirroring R2 (ADR 0002 D3). Remaining: validate the first-download path from a fresh macOS
       user account (careful: `/Applications` is shared across accounts, so the test account must
