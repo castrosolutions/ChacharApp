@@ -41,5 +41,9 @@ Scripts/release.sh
 Scripts/upload-r2.sh
 Scripts/update-cask.sh
 Scripts/analytics.py
+Scripts/snapshot-metrics.py
+Scripts/snapshot-metrics.sh
+Scripts/__pycache__/
 docs/releasing.md
 docs/download-metrics.md
+metrics-snapshots/
