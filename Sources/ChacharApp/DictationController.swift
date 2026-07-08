@@ -29,6 +29,10 @@ final class DictationController {
     /// ("primera frase" + "segunda frase" → "primera frase segunda frase"). See `deliver`.
     private var lastDeliveryDate: Date?
     private var lastDeliveryApp: String?
+    /// Set when the user presses Return/Enter after a dictation: a newline or a submitted prompt
+    /// (e.g. each turn in Claude Code's terminal) starts a fresh line, so the next dictation must
+    /// not be joined to the previous one with a space. Reset on each delivery.
+    private var contextBrokenSinceDelivery = false
     /// How long after a dictation a follow-up still counts as continuing the same text. Generous on
     /// purpose — people pause to think between bursts — but bounded so an unrelated dictation much
     /// later (even in the same app) doesn't inherit a stray leading space.
@@ -162,14 +166,22 @@ final class DictationController {
         injector.inject(payload)
         lastDeliveryDate = Date()
         lastDeliveryApp = frontApp
+        contextBrokenSinceDelivery = false // start a fresh run; a Return before the next one ends it
         onDelivered(trimmed)
     }
 
+    /// Note that the user pressed Return/Enter: the current dictation "run" is over, so the next
+    /// dictation should start on its own line instead of being joined with a space. Cheap flag flip
+    /// driven by the hotkey monitor; no effect on the transcription path.
+    func noteContextBreak() { contextBrokenSinceDelivery = true }
+
     /// Whether this dictation should be prefixed with a space because it continues a recent one in
-    /// the same app. False for the first dictation, after switching apps, or after a long pause, so
-    /// an isolated dictation never picks up a spurious leading space.
+    /// the same app. False for the first dictation, after a Return/Enter (new line or submitted
+    /// prompt), after switching apps, or after a long pause — so an isolated dictation never picks
+    /// up a spurious leading space.
     private func continuesPreviousDictation(inApp app: String?) -> Bool {
-        guard let app, let lastApp = lastDeliveryApp, let last = lastDeliveryDate, app == lastApp
+        guard !contextBrokenSinceDelivery,
+              let app, let lastApp = lastDeliveryApp, let last = lastDeliveryDate, app == lastApp
         else { return false }
         return Date().timeIntervalSince(last) <= Self.continuationWindow
     }

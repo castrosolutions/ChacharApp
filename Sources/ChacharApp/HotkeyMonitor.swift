@@ -47,6 +47,9 @@ final class HotkeyMonitor {
     /// Cancel gesture (ESC): abort the open session without delivering. Fires in both push-to-talk
     /// and hands-free (toggle) mode; the matching key release/toggle afterward becomes a no-op.
     private let onCancel: () -> Void
+    /// The user pressed Return/Enter — a newline or a submitted prompt ends the current dictation
+    /// "run", so the next dictation must not be joined to the previous one with a space.
+    private let onContextBreak: () -> Void
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -59,12 +62,13 @@ final class HotkeyMonitor {
 
     init(triggers: [PushToTalkTrigger], toggleMode: Bool = false,
          onPress: @escaping () -> Void, onRelease: @escaping () -> Void,
-         onCancel: @escaping () -> Void = {}) {
+         onCancel: @escaping () -> Void = {}, onContextBreak: @escaping () -> Void = {}) {
         self.triggers = triggers
         self.toggleMode = toggleMode
         self.onPress = onPress
         self.onRelease = onRelease
         self.onCancel = onCancel
+        self.onContextBreak = onContextBreak
     }
 
     /// Create and enable the tap. Returns `false` if the OS denied it (missing permission).
@@ -130,6 +134,12 @@ final class HotkeyMonitor {
             if code == KeyCode.escape, activeTrigger != nil {
                 cancelActiveSession()
                 return nil
+            }
+            // Return/Enter ends a dictation "run": a newline or a submitted prompt (e.g. Claude Code
+            // in the terminal) is not a continuation, so the next dictation must not inherit a
+            // leading space. Notify and pass the key through untouched (the app still needs it).
+            if code == KeyCode.returnKey || code == KeyCode.keypadEnter {
+                onContextBreak()
             }
             if triggers.contains(.key(code)) {
                 if toggleMode {

@@ -294,7 +294,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             toggleMode: toggleMode,
             onPress: { MainActor.assumeIsolated { self.dictation.press() } },
             onRelease: { MainActor.assumeIsolated { self.dictation.release() } },
-            onCancel: { MainActor.assumeIsolated { self.dictation.cancel() } }
+            onCancel: { MainActor.assumeIsolated { self.dictation.cancel() } },
+            onContextBreak: { MainActor.assumeIsolated { self.dictation.noteContextBreak() } }
         )
     }
 
