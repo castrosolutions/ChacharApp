@@ -23,4 +23,6 @@ public enum KeyCode {
 
     // Editing / control keys.
     public static let escape: CGKeyCode = 53 // kVK_Escape — cancels an in-progress dictation
+    public static let returnKey: CGKeyCode = 36 // kVK_Return — a submit/newline ends a dictation run
+    public static let keypadEnter: CGKeyCode = 76 // kVK_ANSI_KeypadEnter — same, on the numeric keypad
 }
