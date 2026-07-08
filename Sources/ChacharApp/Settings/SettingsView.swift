@@ -891,9 +891,9 @@ private struct VocabularySettingsView: View {
                 }
 
                 Section {
-                    ForEach($model.terms) { $item in
+                    ForEach(model.terms) { item in
                         HStack {
-                            TextField("Term or proper noun", text: $item.term)
+                            TextField("Term or proper noun", text: model.binding(forTerm: item.id))
                                 .textFieldStyle(.roundedBorder)
                             Button { model.removeTerm(item) } label: { Image(systemName: "minus.circle") }
                                 .buttonStyle(.borderless).foregroundStyle(.secondary)
@@ -909,18 +909,20 @@ private struct VocabularySettingsView: View {
                 }
 
                 Section {
-                    ForEach($model.rules) { $rule in
+                    ForEach(model.rules) { rule in
                         VStack(spacing: 4) {
                             HStack {
-                                TextField("heard as", text: $rule.from).textFieldStyle(.roundedBorder)
+                                TextField("heard as", text: model.binding(forRule: rule.id, \.from, default: ""))
+                                    .textFieldStyle(.roundedBorder)
                                 Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                                TextField("replace with", text: $rule.to).textFieldStyle(.roundedBorder)
+                                TextField("replace with", text: model.binding(forRule: rule.id, \.to, default: ""))
+                                    .textFieldStyle(.roundedBorder)
                                 Button { model.removeRule(rule) } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.borderless).foregroundStyle(.secondary)
                             }
                             HStack(spacing: 14) {
-                                Toggle("Case-sensitive", isOn: $rule.caseSensitive)
-                                Toggle("Whole word", isOn: $rule.wholeWord)
+                                Toggle("Case-sensitive", isOn: model.binding(forRule: rule.id, \.caseSensitive, default: false))
+                                Toggle("Whole word", isOn: model.binding(forRule: rule.id, \.wholeWord, default: false))
                                 Spacer()
                             }
                             .toggleStyle(.checkbox).font(.caption).foregroundStyle(.secondary)

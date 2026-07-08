@@ -1,6 +1,7 @@
 import ChacharCore
 import Combine
 import Foundation
+import SwiftUI
 
 /// Backs the Vocabulary tab: edits the glossary (terms biased toward in recognition) and the
 /// deterministic replacement rules (Layer 1), then persists them via the shared `VocabularyStore`
@@ -43,6 +44,32 @@ final class VocabularyViewModel: ObservableObject {
     func removeTerm(_ item: TermItem) { terms.removeAll { $0.id == item.id }; statusMessage = nil }
     func addRule() { rules.append(RuleItem(from: "", to: "", caseSensitive: false, wholeWord: true)); statusMessage = nil }
     func removeRule(_ item: RuleItem) { rules.removeAll { $0.id == item.id }; statusMessage = nil }
+
+    // Row bindings resolve their element by `id` at call time (with a guard), never by a
+    // stored array index. `ForEach($terms)` would instead hand each row an index-based binding;
+    // when the array is replaced/shrunk underneath a `TextField` that is still committing —
+    // e.g. `save()` → `reload()` drops empty rows during the same layout pass — that stale index
+    // trips `Array._checkSubscript` and traps ("Index out of range", crash in 1.3.0). Resolving by
+    // id makes a vanished element read back as the fallback instead of crashing.
+    func binding(forTerm id: TermItem.ID) -> Binding<String> {
+        Binding(
+            get: { [weak self] in self?.terms.first { $0.id == id }?.term ?? "" },
+            set: { [weak self] value in
+                guard let self, let i = self.terms.firstIndex(where: { $0.id == id }) else { return }
+                self.terms[i].term = value
+            }
+        )
+    }
+
+    func binding<V>(forRule id: RuleItem.ID, _ keyPath: WritableKeyPath<RuleItem, V>, default fallback: V) -> Binding<V> {
+        Binding(
+            get: { [weak self] in self?.rules.first { $0.id == id }?[keyPath: keyPath] ?? fallback },
+            set: { [weak self] value in
+                guard let self, let i = self.rules.firstIndex(where: { $0.id == id }) else { return }
+                self.rules[i][keyPath: keyPath] = value
+            }
+        )
+    }
 
     /// The sanitised vocabulary that would be saved: trimmed terms, empty terms/rules dropped, and
     /// default flags normalised back to `nil` to keep the JSON clean.
