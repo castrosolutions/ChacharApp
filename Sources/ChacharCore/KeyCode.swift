@@ -20,4 +20,7 @@ public enum KeyCode {
 
     // Letters.
     public static let ansiV: CGKeyCode = 9 // kVK_ANSI_V — synthesized for the paste (⌘V) injector
+
+    // Editing / control keys.
+    public static let escape: CGKeyCode = 53 // kVK_Escape — cancels an in-progress dictation
 }

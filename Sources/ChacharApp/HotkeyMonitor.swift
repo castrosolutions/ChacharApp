@@ -1,3 +1,4 @@
+import ChacharCore
 import CoreGraphics
 import Foundation
 
@@ -43,6 +44,9 @@ final class HotkeyMonitor {
     private let toggleMode: Bool
     private let onPress: () -> Void
     private let onRelease: () -> Void
+    /// Cancel gesture (ESC): abort the open session without delivering. Fires in both push-to-talk
+    /// and hands-free (toggle) mode; the matching key release/toggle afterward becomes a no-op.
+    private let onCancel: () -> Void
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -54,11 +58,13 @@ final class HotkeyMonitor {
     private var modifiersDown: Set<CGKeyCode> = []
 
     init(triggers: [PushToTalkTrigger], toggleMode: Bool = false,
-         onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {
+         onPress: @escaping () -> Void, onRelease: @escaping () -> Void,
+         onCancel: @escaping () -> Void = {}) {
         self.triggers = triggers
         self.toggleMode = toggleMode
         self.onPress = onPress
         self.onRelease = onRelease
+        self.onCancel = onCancel
     }
 
     /// Create and enable the tap. Returns `false` if the OS denied it (missing permission).
@@ -118,6 +124,13 @@ final class HotkeyMonitor {
 
         switch type {
         case .keyDown:
+            // ESC while a session is open cancels it — in push-to-talk *and* hands-free (toggle)
+            // mode, since `activeTrigger != nil` marks an open session in both. Swallow the ESC so
+            // the focused app never sees it; when idle, ESC passes through untouched.
+            if code == KeyCode.escape, activeTrigger != nil {
+                cancelActiveSession()
+                return nil
+            }
             if triggers.contains(.key(code)) {
                 if toggleMode {
                     // Ignore auto-repeat keyDowns so holding the key doesn't flip on/off.
@@ -187,6 +200,17 @@ final class HotkeyMonitor {
         activeTrigger = nil
         chacharLog("RELEASE \(trigger)")
         onRelease()
+    }
+
+    /// Abort the open session from a cancel gesture (ESC). Clearing `activeTrigger` first makes the
+    /// trigger key's eventual release (push-to-talk) or next toggle (hands-free) a no-op — no
+    /// `onRelease` fires — so the discarded utterance is never transcribed. The physical modifier's
+    /// `modifiersDown` bookkeeping self-corrects on the next `flagsChanged`.
+    private func cancelActiveSession() {
+        guard let cancelled = activeTrigger else { return }
+        activeTrigger = nil
+        chacharLog("CANCEL (esc) \(cancelled)")
+        onCancel()
     }
 
     /// The device-dependent modifier bit a `flagsChanged` event carries when the given left/right

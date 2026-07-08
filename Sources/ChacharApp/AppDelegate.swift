@@ -293,7 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             triggers: triggers,
             toggleMode: toggleMode,
             onPress: { MainActor.assumeIsolated { self.dictation.press() } },
-            onRelease: { MainActor.assumeIsolated { self.dictation.release() } }
+            onRelease: { MainActor.assumeIsolated { self.dictation.release() } },
+            onCancel: { MainActor.assumeIsolated { self.dictation.cancel() } }
         )
     }
 

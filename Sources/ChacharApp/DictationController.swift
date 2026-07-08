@@ -24,6 +24,16 @@ final class DictationController {
     /// drop the modifier key's "release" event (push-to-talk got stuck recording).
     private let micControlQueue = DispatchQueue(label: "app.chachar.mic-control")
 
+    /// When the last dictation was injected, and into which app (bundle id). Used to separate
+    /// consecutive dictations with a space so two bursts into the same field don't run together
+    /// ("primera frase" + "segunda frase" → "primera frase segunda frase"). See `deliver`.
+    private var lastDeliveryDate: Date?
+    private var lastDeliveryApp: String?
+    /// How long after a dictation a follow-up still counts as continuing the same text. Generous on
+    /// purpose — people pause to think between bursts — but bounded so an unrelated dictation much
+    /// later (even in the same app) doesn't inherit a stray leading space.
+    private static let continuationWindow: TimeInterval = 180
+
     /// Whether Layer 2 cleanup is loaded and ready. Owned by the app (which manages model loading);
     /// the pipeline only reads it to decide whether to run cleanup.
     var isCleanupReady: () -> Bool = { false }
@@ -83,6 +93,18 @@ final class DictationController {
         Task { await runPipeline(samples: samples, vocab: vocab, corrector: corrector, runCleanup: runCleanup) }
     }
 
+    /// Cancel gesture (ESC): abort the in-progress utterance. Discard the captured audio, release
+    /// the mic if it only runs while dictating, and skip the pipeline entirely — nothing is
+    /// transcribed or injected. Driven by the hotkey monitor for both push-to-talk and hands-free
+    /// sessions, so ESC always means "throw this one away".
+    func cancel() {
+        _ = capture.endUtterance() // drop the buffered samples without transcribing them
+        if settings.settings.micOnlyWhileDictating {
+            micControlQueue.async { self.capture.stop() }
+        }
+        onStatus("Cancelled")
+    }
+
     // MARK: Pipeline
 
     /// The async correction chain, kept separate so `release()` stays at one level of abstraction
@@ -123,15 +145,33 @@ final class DictationController {
     }
 
     /// Inject the final text into the focused app (clipboard saved/restored), or report no speech.
+    ///
+    /// Consecutive dictations into the same app get a separating space prepended so successive
+    /// push-to-talk bursts read as one continuous text instead of running together — the target
+    /// field can't be inspected (that's why we paste), so this leans on the last-delivery timestamp
+    /// and app rather than the character before the cursor.
     private func deliver(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             onDelivered("(no speech detected)")
             return
         }
-        chacharLog("inject [\(trimmed)]")
-        injector.inject(trimmed)
+        let frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let payload = continuesPreviousDictation(inApp: frontApp) ? " " + trimmed : trimmed
+        chacharLog("inject [\(payload)]")
+        injector.inject(payload)
+        lastDeliveryDate = Date()
+        lastDeliveryApp = frontApp
         onDelivered(trimmed)
+    }
+
+    /// Whether this dictation should be prefixed with a space because it continues a recent one in
+    /// the same app. False for the first dictation, after switching apps, or after a long pause, so
+    /// an isolated dictation never picks up a spurious leading space.
+    private func continuesPreviousDictation(inApp app: String?) -> Bool {
+        guard let app, let lastApp = lastDeliveryApp, let last = lastDeliveryDate, app == lastApp
+        else { return false }
+        return Date().timeIntervalSince(last) <= Self.continuationWindow
     }
 
     /// Append the dictation to the local history log (best-effort; never blocks delivery). Skipped
