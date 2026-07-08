@@ -105,11 +105,6 @@ A working end-to-end vertical slice, validated on device. Development environmen
 Three ways to get ChacharApp — **all run 100% locally**. The only difference is how the app
 gets onto your Mac: prebuilt via direct download or Homebrew, or compiled by you.
 
-> **On a managed/corporate Mac?** Installs can be gated by your company's MDM, not by the download
-> itself (and Homebrew doesn't bypass that). See the
-> [**Enterprise Security & Deployment Brief**](docs/security-brief.md) — signing identity, Team ID,
-> entitlements, network behaviour and MDM/allowlisting steps — and hand it to your IT/Security team.
-
 ### Option A — Download the app (easiest)
 
 1. Download the latest **notarized** `.dmg`:
@@ -188,8 +183,6 @@ your Mac). Your dictation history is stored only on disk, under
 
 - [`docs/code-guide.md`](docs/code-guide.md) — read-it-like-a-book guide to the source,
   with diagrams.
-- [`docs/security-brief.md`](docs/security-brief.md) — enterprise security & deployment brief for
-  IT/Security teams (signing, entitlements, network egress, MDM deployment).
 - [`decisions/`](decisions/) — architecture decision records (ASR engine; distribution).
 - [`docs/`](docs/) — latency, the Layer 0 glossary
   investigation, the MVP plan and the roadmap.
