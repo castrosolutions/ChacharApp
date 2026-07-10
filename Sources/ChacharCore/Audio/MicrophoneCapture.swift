@@ -4,6 +4,20 @@ import Foundation
 /// Errors surfaced by `MicrophoneCapture`.
 public enum MicrophoneCaptureError: Error, Sendable {
     case converterUnavailable
+    /// The input device reports no usable format (0 Hz / 0 channels) — typically mid-switch
+    /// between devices (e.g. AirPods connecting) or before the Microphone TCC grant.
+    case inputUnavailable
+}
+
+extension MicrophoneCaptureError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .converterUnavailable:
+            return "the microphone's format can't be converted for transcription"
+        case .inputUnavailable:
+            return "no usable input device (it may still be switching — try again)"
+        }
+    }
 }
 
 /// Captures microphone audio via `AVAudioEngine` and converts it to 16 kHz mono Float — the
@@ -20,13 +34,25 @@ public final class MicrophoneCapture: @unchecked Sendable {
     /// the audio format math).
     public static let targetSampleRate = Double(AudioSamples.whisperSampleRate)
 
-    /// `var`, not `let`: an engine started before the Microphone TCC grant lands caches a bogus
-    /// input format (0 Hz) and keeps delivering silence even after the user grants — the only cure
-    /// is a fresh engine instance (see `reset()` and the self-heal in `start()`).
+    /// `var`, not `let`: an `AVAudioEngine` instance caches its input device's format, and that
+    /// cache goes stale whenever the environment changes under it — created before the Microphone
+    /// TCC grant (bogus 0 Hz format, silence forever), or the default input device changed while
+    /// stopped (AirPods in/out). Installing a tap with a stale format raises an Objective-C
+    /// `NSException` that Swift cannot catch → SIGABRT. The only reliable cure is a fresh engine
+    /// instance, which re-queries the hardware (see `startLocked()`, `reset()` and
+    /// `handleConfigurationChange(engineID:)`).
     private var engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
     private var converter: AVAudioConverter?
     private var isRunning = false
+
+    /// Observer token for `.AVAudioEngineConfigurationChange` (see `init`).
+    private var configChangeObserver: (any NSObjectProtocol)?
+    /// Serial queue where the configuration-change rebuild runs. The notification can be posted
+    /// synchronously from inside `engine.start()` (Bluetooth mics renegotiate their format when
+    /// capture actually begins), so the handler must hop queues — reacting inline would deadlock
+    /// on `stateLock`.
+    private let configChangeQueue = DispatchQueue(label: "app.chachar.mic-config-change")
 
     /// Guards the engine lifecycle (`isRunning`, `converter`, the engine itself). `start()`/
     /// `stop()` are called from the main thread (app startup, settings changes) *and* from the
@@ -47,22 +73,52 @@ public final class MicrophoneCapture: @unchecked Sendable {
             channels: 1,
             interleaved: false
         )!
+
+        // A running engine stops itself — silently, no error — when its I/O configuration changes:
+        // the default input device switches (AirPods connect/disconnect) or the device renegotiates
+        // its format (Bluetooth mics drop to their hands-free profile the moment capture starts).
+        // Without this observer the tap just stops firing and the utterance comes back empty
+        // ("mic doesn't work"). Rebuild and restart so capture resumes mid-utterance.
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let self, let posted = notification.object as? AVAudioEngine else { return }
+            let engineID = ObjectIdentifier(posted) // capture identity, not the non-Sendable engine
+            self.configChangeQueue.async { self.handleConfigurationChange(engineID: engineID) }
+        }
+    }
+
+    deinit {
+        if let configChangeObserver {
+            NotificationCenter.default.removeObserver(configChangeObserver)
+        }
     }
 
     /// Start the engine and install the input tap. Keeps the mic warm. Idempotent.
     public func start() throws {
         stateLock.lock(); defer { stateLock.unlock() }
-        guard !isRunning else { return }
-        var input = engine.inputNode
-        var inputFormat = input.outputFormat(forBus: 0)
+        try startLocked()
+    }
 
-        // Self-heal: a 0 Hz / 0-channel input format means this engine was created while the mic
-        // was not yet authorized (its first start is what triggers the TCC prompt). The stale
-        // engine never recovers, so swap in a fresh one and re-read the real format.
-        if inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
-            engine = AVAudioEngine()
-            input = engine.inputNode
-            inputFormat = input.outputFormat(forBus: 0)
+    /// The actual start sequence. Callers must hold `stateLock`.
+    private func startLocked() throws {
+        guard !isRunning else { return }
+
+        // Always start from a FRESH engine: the previous instance's cached input format may be
+        // stale (device switched while stopped, or pre-TCC-grant 0 Hz), and both AVAudioConverter
+        // and installTap choke on a stale format — the latter with an uncatchable NSException
+        // (SIGABRT). A new engine re-queries the hardware; its cost is a few ms, dwarfed by
+        // `engine.start()` itself, so warm-mode latency is unaffected (start runs once) and
+        // cold-mode latency is unchanged.
+        engine = AVAudioEngine()
+        let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+
+        // Even a fresh engine can report 0 Hz: mic not yet authorized (the first start is what
+        // triggers the TCC prompt) or the input device is mid-switch. Fail cleanly — the next
+        // start() retries with another fresh engine.
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw MicrophoneCaptureError.inputUnavailable
         }
 
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
@@ -70,13 +126,6 @@ public final class MicrophoneCapture: @unchecked Sendable {
         }
         self.converter = converter
 
-        // Remove any tap left over from a previous start that failed *after* installing the tap
-        // (e.g. `engine.start()` below threw and unwound before `isRunning` was set). Installing a
-        // tap on a bus that already has one raises an Objective-C `NSException` — which no Swift
-        // `try?`/`do-catch` can catch — and aborts the process (this is the SIGABRT in
-        // DictationController.press). `removeTap` is a safe no-op when there is no tap, so doing it
-        // unconditionally here makes tap installation idempotent and the double-tap crash impossible.
-        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.process(buffer)
         }
@@ -84,13 +133,33 @@ public final class MicrophoneCapture: @unchecked Sendable {
         do {
             try engine.start()
         } catch {
-            // Don't leave the freshly-installed tap dangling if the engine won't start: otherwise the
-            // next start() would see `isRunning == false` with a tap still installed and crash on the
-            // installTap above.
+            // Don't leave the freshly-installed tap dangling if the engine won't start; keeps the
+            // engine reusable by stop()/reset() bookkeeping.
             input.removeTap(onBus: 0)
             throw error
         }
         isRunning = true
+    }
+
+    /// Reacts to `.AVAudioEngineConfigurationChange` (posted when the engine's input device or its
+    /// format changes — e.g. AirPods becoming the default input, or a Bluetooth mic switching to
+    /// its call profile once capture starts). At that point the engine has already stopped itself
+    /// and its cached format is stale, so restarting the *same* instance risks the uncatchable
+    /// `installTap` NSException — `startLocked()` swaps in a fresh engine instead. Runs on
+    /// `configChangeQueue`.
+    private func handleConfigurationChange(engineID: ObjectIdentifier) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        // Ignore notifications from engines we've already replaced, and do nothing if we were
+        // deliberately stopped (cold mode at rest) — the next start() builds fresh anyway.
+        guard engineID == ObjectIdentifier(engine), isRunning else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        isRunning = false
+        // Best effort: if the device is still settling this throws and the mic stays closed until
+        // the next push-to-talk start() retries. If the restart itself triggers another
+        // configuration change (format renegotiation), that posts a new notification and we
+        // converge in a pass or two.
+        try? startLocked()
     }
 
     /// Stop the engine and remove the tap.

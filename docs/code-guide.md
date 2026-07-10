@@ -470,6 +470,15 @@ lifecycle (`start`/`stop` are called from both the main thread and the mic queue
 `AVAudioEngine` is not thread-safe). The state lock is never taken on the real-time
 thread, so audio delivery can't stall behind an engine transition.
 
+A third idea joined later: **the input device can change under you**. `AVAudioEngine`
+caches its input device's format, and that cache goes stale when the default input
+switches (AirPods connecting, for instance) — installing a tap with a stale format raises
+an Objective-C exception Swift cannot catch, which aborts the process. So `start()`
+always builds a *fresh* engine (re-querying the hardware, a few ms), and an
+`AVAudioEngineConfigurationChange` observer rebuilds and restarts a running engine when
+the device or its format changes mid-flight (Bluetooth mics renegotiate their format the
+moment capture begins, stopping the engine silently).
+
 How the audio actually flows: `start()` installs a **tap** on the engine's input node — a
 callback that receives every ~4096-frame buffer the microphone produces, in the
 hardware's native format (typically 48 kHz stereo). Each buffer is pushed through an

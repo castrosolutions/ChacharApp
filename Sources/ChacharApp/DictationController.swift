@@ -73,7 +73,18 @@ final class DictationController {
     /// time).
     func press() {
         if settings.settings.micOnlyWhileDictating {
-            micControlQueue.async { try? self.capture.start() }
+            micControlQueue.async {
+                do {
+                    try self.capture.start()
+                } catch {
+                    // Surface it — a silently-swallowed failure here reads as "the app just died"
+                    // (this was the AirPods bug: device switch → start failed with no feedback).
+                    Task { @MainActor in
+                        self.onStatus("Mic error")
+                        self.onWarning("Could not open the microphone: \(error.localizedDescription)")
+                    }
+                }
+            }
         }
         capture.beginUtterance()
         onStatus("● Listening…")
