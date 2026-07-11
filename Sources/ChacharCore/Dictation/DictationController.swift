@@ -1,28 +1,34 @@
-import AppKit
-import ChacharCore
 import Foundation
 
 /// Drives one push-to-talk dictation from key-down to inserted text: capture → transcribe →
 /// correct (Layer 1 + fuzzy + optional Layer 2) → inject → log.
 ///
-/// Extracted from `AppDelegate` so the delegate is just wiring and menus, and the pipeline is a
-/// single cohesive unit with one clear job. It owns nothing heavy — the models, mic, stores and
-/// injector are shared references passed in — and reports back to the app through closures
-/// (`onStatus`, `onDelivered`, `onWarning`) instead of reaching into the UI directly.
+/// Lives in ChacharCore behind protocol seams (`AudioCapturing`, `Transcriber`, `TextCleaner`,
+/// `TextInjector`) so the whole pipeline is testable with fakes — no mic, ANE, or TCC involved
+/// (docs/testing.md, level 2). It owns nothing heavy — the models, mic, stores and injector are
+/// shared references passed in — and reports back to the app through closures (`onStatus`,
+/// `onDelivered`, `onWarning`) instead of reaching into the UI directly.
 @MainActor
-final class DictationController {
-    private let capture: MicrophoneCapture
+public final class DictationController {
+    private let capture: any AudioCapturing
     private let transcriber: any Transcriber
     private let cleaner: any TextCleaner
     private let injector: any TextInjector
     private let vocabulary: VocabularyStore
     private let history: HistoryStore
-    private let settings: SettingsStore
+    /// Reads the current user options — called fresh at each key event, so a settings change
+    /// applies to the very next dictation without any re-wiring.
+    private let options: @MainActor () -> DictationOptions
 
     /// Serial queue for opening/closing the mic engine OFF the event-tap (main run loop) thread.
     /// Starting AVAudioEngine synchronously inside the hotkey callback stalled the tap and could
     /// drop the modifier key's "release" event (push-to-talk got stuck recording).
     private let micControlQueue = DispatchQueue(label: "app.chachar.mic-control")
+
+    /// Set when this utterance's mic start failed (device mid-switch, no input): `release()` must
+    /// not run the pipeline on the empty capture — it would end by overwriting the "Mic error"
+    /// status with "Ready", claiming a health the app doesn't have. Reset on each `press()`.
+    private var micStartFailed = false
 
     /// When the last dictation was injected, and into which app (bundle id). Used to separate
     /// consecutive dictations with a space so two bursts into the same field don't run together
@@ -40,49 +46,55 @@ final class DictationController {
 
     /// Whether Layer 2 cleanup is loaded and ready. Owned by the app (which manages model loading);
     /// the pipeline only reads it to decide whether to run cleanup.
-    var isCleanupReady: () -> Bool = { false }
+    public var isCleanupReady: () -> Bool = { false }
     /// Report a user-visible status line (menu-bar status item).
-    var onStatus: (String) -> Void = { _ in }
+    public var onStatus: (String) -> Void = { _ in }
     /// Called with the final text once it has been injected (e.g. to flash a HUD).
-    var onDelivered: (String) -> Void = { _ in }
+    public var onDelivered: (String) -> Void = { _ in }
     /// Non-fatal warnings worth surfacing (e.g. a malformed `vocabulary.json` was ignored).
-    var onWarning: (String) -> Void = { _ in }
+    public var onWarning: (String) -> Void = { _ in }
+    /// Identify the app that will receive the injected text. The app wires this to `NSWorkspace`;
+    /// tests supply a canned value (see `FrontmostApp`).
+    public var frontmostApp: () -> FrontmostApp = { FrontmostApp(bundleID: nil, name: nil) }
 
-    init(capture: MicrophoneCapture,
-         transcriber: any Transcriber,
-         cleaner: any TextCleaner,
-         vocabulary: VocabularyStore,
-         history: HistoryStore,
-         settings: SettingsStore,
-         injector: any TextInjector = PasteboardInjector()) {
+    public init(capture: any AudioCapturing,
+                transcriber: any Transcriber,
+                cleaner: any TextCleaner,
+                vocabulary: VocabularyStore,
+                history: HistoryStore,
+                options: @escaping @MainActor () -> DictationOptions,
+                injector: any TextInjector = PasteboardInjector()) {
         self.capture = capture
         self.transcriber = transcriber
         self.cleaner = cleaner
         self.injector = injector
         self.vocabulary = vocabulary
         self.history = history
-        self.settings = settings
+        self.options = options
     }
 
     // MARK: Push-to-talk
 
-    /// Key down: begin an utterance. In "only while dictating" mode the mic is closed at rest —
-    /// open it now, but OFF the event-tap thread so the callback returns immediately (a blocking
-    /// start here stalled the tap and dropped the modifier release → stuck recording). Collecting
-    /// starts right away; buffers simply begin flowing once the engine is up (hidden by reaction
-    /// time).
-    func press() {
-        if settings.settings.micOnlyWhileDictating {
-            micControlQueue.async {
-                do {
-                    try self.capture.start()
-                } catch {
-                    // Surface it — a silently-swallowed failure here reads as "the app just died"
-                    // (this was the AirPods bug: device switch → start failed with no feedback).
-                    Task { @MainActor in
-                        self.onStatus("Mic error")
-                        self.onWarning("Could not open the microphone: \(error.localizedDescription)")
-                    }
+    /// Key down: begin an utterance. The mic engine is opened OFF the event-tap thread so the
+    /// callback returns immediately (a blocking start here stalled the tap and dropped the
+    /// modifier release → stuck recording). The start attempt runs in BOTH mic modes: in "only
+    /// while dictating" mode it is the designed open (the mic is closed at rest); in warm mode
+    /// `start()` is an idempotent no-op while healthy, and doubles as the retry path when a
+    /// device change (AirPods) tore the engine down and its in-place rebuild failed — otherwise
+    /// a failed rebuild would leave the warm mic silently dead until relaunch. Collecting starts
+    /// right away; buffers simply begin flowing once the engine is up (hidden by reaction time).
+    public func press() {
+        micStartFailed = false
+        micControlQueue.async {
+            do {
+                try self.capture.start()
+            } catch {
+                // Surface it — a silently-swallowed failure here reads as "the app just died"
+                // (this was the AirPods bug: device switch → start failed with no feedback).
+                Task { @MainActor in
+                    self.micStartFailed = true
+                    self.onStatus("Mic error")
+                    self.onWarning("Could not open the microphone: \(error.localizedDescription)")
                 }
             }
         }
@@ -91,30 +103,46 @@ final class DictationController {
     }
 
     /// Key up: stop capturing and run the transcription pipeline on the recorded audio.
-    func release() {
+    public func release() {
         let samples = capture.endUtterance()
-        if settings.settings.micOnlyWhileDictating {
+        let opts = options()
+        if opts.micOnlyWhileDictating {
             micControlQueue.async { self.capture.stop() } // release mic (indicator off) off-thread
         }
         let peak = samples.values.map(abs).max() ?? 0
         chacharLog("captured \(samples.values.count) samples, peak=\(peak)")
+
+        // No audio at all — the engine never delivered a buffer (mic start failed, or the press
+        // was shorter than the engine spin-up). Skip the pipeline: transcribing zero samples
+        // would overwrite a "Mic error" status with "Ready" and claim the dictation succeeded.
+        guard !samples.values.isEmpty else {
+            if !micStartFailed {
+                onStatus("Ready")
+                onDelivered("(no speech detected)")
+            }
+            return
+        }
+
         onStatus("… Transcribing")
 
         let vocab = vocabulary.reloadIfChanged()                 // pick up hand-edits
         if let parseError = vocabulary.lastParseError { onWarning(parseError) }
         let corrector = DictionaryCorrector(vocab.replacements)  // Layer 1
-        let runCleanup = settings.settings.cleanupEnabled && isCleanupReady()
+        let runCleanup = opts.cleanupEnabled && isCleanupReady()
 
-        Task { await runPipeline(samples: samples, vocab: vocab, corrector: corrector, runCleanup: runCleanup) }
+        Task {
+            await runPipeline(samples: samples, vocab: vocab, corrector: corrector,
+                              options: opts, runCleanup: runCleanup)
+        }
     }
 
     /// Cancel gesture (ESC): abort the in-progress utterance. Discard the captured audio, release
     /// the mic if it only runs while dictating, and skip the pipeline entirely — nothing is
     /// transcribed or injected. Driven by the hotkey monitor for both push-to-talk and hands-free
     /// sessions, so ESC always means "throw this one away".
-    func cancel() {
+    public func cancel() {
         _ = capture.endUtterance() // drop the buffered samples without transcribing them
-        if settings.settings.micOnlyWhileDictating {
+        if options().micOnlyWhileDictating {
             micControlQueue.async { self.capture.stop() }
         }
         onStatus("Cancelled")
@@ -124,8 +152,8 @@ final class DictationController {
 
     /// The async correction chain, kept separate so `release()` stays at one level of abstraction
     /// (start/stop the capture) and this method expresses the layered pipeline.
-    private func runPipeline(samples: AudioSamples, vocab: Vocabulary,
-                             corrector: DictionaryCorrector, runCleanup: Bool) async {
+    private func runPipeline(samples: AudioSamples, vocab: Vocabulary, corrector: DictionaryCorrector,
+                             options: DictationOptions, runCleanup: Bool) async {
         do {
             // Trim the near-silent tail before transcription: it reduces Whisper's end-of-audio
             // hallucinations (a stray "gracias"/"thank you") and shaves a little latency.
@@ -137,21 +165,21 @@ final class DictationController {
             let result = try await transcriber.transcribe(speech, prompt: nil)
             chacharLog("transcribed [\(result.text)] in \(String(format: "%.2f", result.duration))s")
 
-            var output = corrector.correct(result.text)         // Layer 1: deterministic fixes
-            if settings.settings.fuzzyGlossaryEnabled {         // Layer 1 (fuzzy): misheard jargon
+            var output = corrector.correct(result.text)        // Layer 1: deterministic fixes
+            if options.fuzzyGlossaryEnabled {                  // Layer 1 (fuzzy): misheard jargon
                 output = FuzzyGlossaryCorrector(glossary: vocab.glossary).correct(output)
             }
-            if settings.settings.trailingHallucinationFilter {  // Layer 1: strip end-of-audio "gracias"
+            if options.trailingHallucinationFilter {           // Layer 1: strip end-of-audio "gracias"
                 output = HallucinationFilter().correct(output)
             }
             var didCleanup = false
-            if runCleanup {                                     // Layer 2: local LLM cleanup
+            if runCleanup {                                    // Layer 2: local LLM cleanup
                 onStatus("… Cleaning up")
                 if let cleaned = try? await cleaner.clean(output) { output = cleaned; didCleanup = true }
             }
             deliver(output)
             recordHistory(raw: result.text, inserted: output, cleanupApplied: didCleanup,
-                          duration: result.duration)
+                          duration: result.duration, historyEnabled: options.historyEnabled)
             onStatus(String(format: "Ready  (last: %.1fs)", result.duration))
         } catch {
             onStatus("Transcription error")
@@ -171,7 +199,7 @@ final class DictationController {
             onDelivered("(no speech detected)")
             return
         }
-        let frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let frontApp = frontmostApp().bundleID
         let payload = continuesPreviousDictation(inApp: frontApp) ? " " + trimmed : trimmed
         chacharLog("inject [\(payload)]")
         injector.inject(payload)
@@ -184,7 +212,7 @@ final class DictationController {
     /// Note that the user pressed Return/Enter: the current dictation "run" is over, so the next
     /// dictation should start on its own line instead of being joined with a space. Cheap flag flip
     /// driven by the hotkey monitor; no effect on the transcription path.
-    func noteContextBreak() { contextBrokenSinceDelivery = true }
+    public func noteContextBreak() { contextBrokenSinceDelivery = true }
 
     /// Whether this dictation should be prefixed with a space because it continues a recent one in
     /// the same app. False for the first dictation, after a Return/Enter (new line or submitted
@@ -199,11 +227,12 @@ final class DictationController {
 
     /// Append the dictation to the local history log (best-effort; never blocks delivery). Skipped
     /// when the user disabled recording or nothing was inserted.
-    private func recordHistory(raw: String, inserted: String, cleanupApplied: Bool, duration: Double) {
-        guard settings.settings.historyEnabled else { return }
+    private func recordHistory(raw: String, inserted: String, cleanupApplied: Bool,
+                               duration: Double, historyEnabled: Bool) {
+        guard historyEnabled else { return }
         guard !inserted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let app = NSWorkspace.shared.frontmostApplication?.localizedName
         history.append(DictationRecord(date: Date(), raw: raw, inserted: inserted,
-                                       cleanupApplied: cleanupApplied, app: app, durationSeconds: duration))
+                                       cleanupApplied: cleanupApplied, app: frontmostApp().name,
+                                       durationSeconds: duration))
     }
 }

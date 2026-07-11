@@ -128,3 +128,15 @@ struct ASRLanguageOption: Identifiable, Hashable {
         catalog.first { $0.code == code }?.label ?? (code ?? "Auto-detect")
     }
 }
+
+extension AppSettings {
+    /// The slice of these settings the dictation pipeline reads (`DictationController` lives in
+    /// ChacharCore and takes this instead of the whole store — see docs/testing.md, level 2).
+    var dictationOptions: DictationOptions {
+        DictationOptions(micOnlyWhileDictating: micOnlyWhileDictating,
+                         cleanupEnabled: cleanupEnabled,
+                         fuzzyGlossaryEnabled: fuzzyGlossaryEnabled,
+                         trailingHallucinationFilter: trailingHallucinationFilter,
+                         historyEnabled: historyEnabled)
+    }
+}

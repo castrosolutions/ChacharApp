@@ -6,9 +6,10 @@
 
 ## Current state
 
-Automated testing today is **unit tests only, and only over `ChacharCore`** — the pure,
-dependency-free logic layer (no MLX, no AppKit, no hardware). The SPM `.testTarget`
-(`ChacharCoreTests`) depends on `ChacharCore` and nothing else. Run them with `swift test`.
+Automated testing today covers **`ChacharCore` only** — the logic layer (no MLX, no hardware):
+unit tests over the pure pieces, plus one **pipeline integration suite** that drives
+`DictationController` through fakes (level 2 below). The SPM `.testTarget` (`ChacharCoreTests`)
+depends on `ChacharCore` and nothing else. Run them with `swift test`.
 
 Covered:
 
@@ -19,12 +20,13 @@ Covered:
 | `FuzzyGlossaryCorrectorTests` | Layer 1 fuzzy/phonetic matching |
 | `HistoryStoreTests` | dictation-history log (append, trim, malformed lines) |
 | `ASRModelManagerTests` | on-disk model management |
+| `DictationControllerTests` | the **level-2 integration test** (see below): `press()`/`release()` through the whole pipeline with fakes at the seams — incl. the mic-start failure modes of the AirPods device-switch fix |
 | `ChacharCoreTests` | smoke |
 
 **Not covered by any automated test** (by choice — see the reasoning below):
 
-- `ChacharApp` — `AppDelegate`, `DictationController`, `HotkeyMonitor`, `HUDController`, and the
-  whole SwiftUI/AppKit Settings surface.
+- `ChacharApp` — `AppDelegate`, `HotkeyMonitor`, `HUDController`, and the whole SwiftUI/AppKit
+  Settings surface.
 - `ChacharCleanupMLX` — the Layer 2 MLX cleaner.
 - The hardware/OS-boundary pieces: `WhisperKitTranscriber` (Apple Neural Engine),
   `MicrophoneCapture` (`AVAudioEngine`), `TextInjector` (Accessibility TCC + injecting into a
@@ -60,17 +62,17 @@ Three levels, none of which chase the literal E2E:
 
 1. **Unit (what we have).** Pure logic in `ChacharCore`. Cheap, fast, deterministic. Keep growing
    it as logic lands here.
-2. **Integration with fakes at the seams (the deliberate gap).** The ports-and-adapters refactor
-   made this *possible*: `DictationController` depends on `any Transcriber`, `any TextCleaner`,
-   capture, vocabulary, and history through protocols. A `FakeTranscriber` returning canned text,
-   a capture yielding a fixed buffer, and a spy injector would let a test drive `press()`/
-   `release()` and assert the **whole pipeline** — capture → transcribe → Layer 1 → Layer 2 →
-   inject → history — with no mic, ANE, GPU, or TCC involved. This is the highest-ROI test we
-   *could* add, and it is the one that would prove "the feature still works end-to-end in logic
-   terms". **We have chosen not to build it yet.** The one prerequisite when we do: `DictationController`
-   currently lives in the `ChacharApp` executable target, which SPM tests poorly; the clean move
-   is to relocate `DictationController` (and an `Injector` protocol) into `ChacharCore`, leaving
-   `ChacharApp` as thin AppKit glue.
+2. **Integration with fakes at the seams (built — `DictationControllerTests`).**
+   `DictationController` lives in `ChacharCore` (`Dictation/DictationController.swift`) and
+   depends on ports only: `AudioCapturing`, `any Transcriber`, `any TextCleaner`,
+   `any TextInjector`, plus a `() -> DictationOptions` closure instead of the app's settings
+   store and a `() -> FrontmostApp` closure instead of `NSWorkspace`. A `FakeCapture` yielding a
+   fixed buffer (or a scripted `start()` failure), a `FakeTranscriber` returning canned text and
+   a spy injector drive `press()`/`release()` and assert the **whole pipeline** — capture →
+   transcribe → Layer 1 → inject → history — with no mic, ANE, GPU, or TCC involved. This is
+   what proves "the feature still works end-to-end in logic terms"; it also pins the regression
+   modes of the AirPods device-switch fix (a failed mic start must be retried on the next press
+   in *both* mic modes, must be surfaced, and must not be masked by a later "Ready").
 3. **Golden / contract tests, opt-in and local (not built).** A test that transcribes a fixed WAV
    and asserts a WER threshold; a test that runs Layer 2 over a fixed phrase and checks the
    cleanup. These guard accuracy against model swaps, but they need the model + hardware, so they
@@ -80,7 +82,7 @@ Three levels, none of which chase the literal E2E:
 
 ## Decision
 
-For now we stop at **level 1 (unit)**. Levels 2 and 3 are documented, understood, and
-intentionally deferred — not forgotten. When the accuracy or pipeline surface starts changing
-often enough that manual on-device checks stop being enough, the first step is the level-2
-integration test on `DictationController`, which the recent refactor already unblocked.
+We cover **levels 1 (unit) and 2 (pipeline integration with fakes)**; both run in plain
+`swift test`. Level 3 (golden/contract tests against the real models) stays documented,
+understood, and intentionally deferred — not forgotten. The literal E2E (voice →
+text-in-another-app) remains manual on purpose, per the reasoning above.

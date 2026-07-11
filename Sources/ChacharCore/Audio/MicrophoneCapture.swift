@@ -29,7 +29,7 @@ extension MicrophoneCaptureError: LocalizedError {
 ///
 /// `@unchecked Sendable`: the audio tap fires on a real-time thread, so all shared state is
 /// guarded by explicit locks rather than actor isolation (which can't be used on the RT thread).
-public final class MicrophoneCapture: @unchecked Sendable {
+public final class MicrophoneCapture: AudioCapturing, @unchecked Sendable {
     /// Whisper's required sample rate (mirrors `AudioSamples.whisperSampleRate` as a `Double` for
     /// the audio format math).
     public static let targetSampleRate = Double(AudioSamples.whisperSampleRate)
@@ -39,8 +39,8 @@ public final class MicrophoneCapture: @unchecked Sendable {
     /// TCC grant (bogus 0 Hz format, silence forever), or the default input device changed while
     /// stopped (AirPods in/out). Installing a tap with a stale format raises an Objective-C
     /// `NSException` that Swift cannot catch → SIGABRT. The only reliable cure is a fresh engine
-    /// instance, which re-queries the hardware (see `startLocked()`, `reset()` and
-    /// `handleConfigurationChange(engineID:)`).
+    /// instance, which re-queries the hardware — `startLocked()` builds one on every start (see
+    /// also `handleConfigurationChange(engineID:)`).
     private var engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
     private var converter: AVAudioConverter?
@@ -130,15 +130,17 @@ public final class MicrophoneCapture: @unchecked Sendable {
             self?.process(buffer)
         }
         engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            // Don't leave the freshly-installed tap dangling if the engine won't start; keeps the
-            // engine reusable by stop()/reset() bookkeeping.
-            input.removeTap(onBus: 0)
-            throw error
-        }
+        // If this throws, the failed engine is simply abandoned: `isRunning` stays false, so
+        // stop()/reset() won't touch it, and the next startLocked() replaces it with a fresh one.
+        try engine.start()
         isRunning = true
+    }
+
+    /// The actual stop sequence. Callers must hold `stateLock` and have checked `isRunning`.
+    private func stopLocked() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        isRunning = false
     }
 
     /// Reacts to `.AVAudioEngineConfigurationChange` (posted when the engine's input device or its
@@ -152,13 +154,12 @@ public final class MicrophoneCapture: @unchecked Sendable {
         // Ignore notifications from engines we've already replaced, and do nothing if we were
         // deliberately stopped (cold mode at rest) — the next start() builds fresh anyway.
         guard engineID == ObjectIdentifier(engine), isRunning else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        isRunning = false
+        stopLocked()
         // Best effort: if the device is still settling this throws and the mic stays closed until
-        // the next push-to-talk start() retries. If the restart itself triggers another
-        // configuration change (format renegotiation), that posts a new notification and we
-        // converge in a pass or two.
+        // the next push-to-talk press() retries — press() always attempts start(), in both mic
+        // modes, so a failed rebuild here is recovered on the next dictation. If the restart
+        // itself triggers another configuration change (format renegotiation), that posts a new
+        // notification and we converge in a pass or two.
         try? startLocked()
     }
 
@@ -166,23 +167,19 @@ public final class MicrophoneCapture: @unchecked Sendable {
     public func stop() {
         stateLock.lock(); defer { stateLock.unlock() }
         guard isRunning else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        isRunning = false
+        stopLocked()
     }
 
-    /// Tear the engine down and swap in a fresh instance. Call when the Microphone permission is
-    /// granted mid-run: the engine whose start triggered the TCC prompt keeps delivering silence
-    /// even after the grant (its input format/state is frozen pre-authorization), and only a new
-    /// engine picks up the authorized input. The next `start()` rebuilds the tap and converter.
+    /// Tear the capture down so the next `start()` re-queries the hardware. Call when the
+    /// Microphone permission is granted mid-run: the engine whose start triggered the TCC prompt
+    /// keeps delivering silence even after the grant (its input format/state is frozen
+    /// pre-authorization). Stopping is enough — `startLocked()` always builds a fresh engine, so
+    /// the next `start()` picks up the authorized input.
     public func reset() {
         stateLock.lock(); defer { stateLock.unlock() }
         if isRunning {
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
-            isRunning = false
+            stopLocked()
         }
-        engine = AVAudioEngine()
         converter = nil
     }
 
