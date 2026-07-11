@@ -359,26 +359,34 @@ In code, `release()` stays at one level of abstraction (stop capturing, prepare 
 correctors, hand off), and the async chain lives in `runPipeline(...)`:
 
 ```swift
-func release() {
+public func release() {
     let samples = capture.endUtterance()
+    let opts = options()                                     // one settings snapshot per utterance
     // … close the mic again if in "only while dictating" mode …
+    guard !samples.values.isEmpty else {
+        // The mic never delivered a buffer (failed start, or a press shorter than the engine
+        // spin-up): skip the pipeline so a "Mic error" status is never overwritten by "Ready".
+        if !micStartFailed { onStatus("Ready"); onDelivered("(no speech detected)") }
+        return
+    }
     let vocab = vocabulary.reloadIfChanged()                 // pick up hand-edits
     if let parseError = vocabulary.lastParseError { onWarning(parseError) }
     let corrector = DictionaryCorrector(vocab.replacements)  // Layer 1
-    let runCleanup = settings.settings.cleanupEnabled && isCleanupReady()
-    Task { await runPipeline(samples: samples, vocab: vocab, corrector: corrector, runCleanup: runCleanup) }
+    let runCleanup = opts.cleanupEnabled && isCleanupReady()
+    Task { await runPipeline(samples: samples, vocab: vocab, corrector: corrector,
+                             options: opts, runCleanup: runCleanup) }
 }
 ```
 
 Three things about `release()` reward a slow read:
 
 - **It snapshots everything the async work will need — before launching the `Task`.** The
-  vocabulary, the corrector built from it, and the "should Layer 2 run?" decision are all
-  captured as plain values *now*. If the user flips a toggle or edits the vocabulary
-  while the pipeline is mid-flight, this dictation finishes under the rules it started
-  with; the *next* press sees the new state. Passing immutable values into async work
-  instead of sharing mutable state is the cheapest concurrency-correctness trick in the
-  book, and this method is its poster child.
+  vocabulary, the corrector built from it, the settings slice (`DictationOptions`) and the
+  "should Layer 2 run?" decision are all captured as plain values *now*. If the user flips
+  a toggle or edits the vocabulary while the pipeline is mid-flight, this dictation
+  finishes under the rules it started with; the *next* press sees the new state. Passing
+  immutable values into async work instead of sharing mutable state is the cheapest
+  concurrency-correctness trick in the book, and this method is its poster child.
 - **`Task { … }` is unstructured concurrency** — closer to calling a `void`-returning
   async function in TS without awaiting it than to an awaited promise. Nothing waits for
   the pipeline: the hotkey callback must return immediately (Chapter 9 explains why), and
@@ -386,8 +394,10 @@ Three things about `release()` reward a slow read:
 - **Every failure has a decided fallback.** Trace the error posture through
   `runPipeline`: transcription failure → status line + warning, never a crash; Layer 2
   failure (`try?`) → silently keep the Layer 1 text; empty result → "(no speech
-  detected)". Dictation is a muscle-memory gesture — the pipeline treats "always deliver
-  something sensible" as part of its contract, not as an afterthought.
+  detected)"; a mic that never opened → the empty-capture guard above skips the pipeline
+  entirely, so the "Mic error" status set by `press()` survives instead of being replaced
+  by a bogus "Ready". Dictation is a muscle-memory gesture — the pipeline treats "always
+  deliver something sensible" as part of its contract, not as an afterthought.
 
 > **Swift phrasebook — errors.**
 > - Functions that can fail are marked `throws`, and callers *must* write `try` — failure
@@ -408,9 +418,10 @@ Layer 1 → fuzzy Layer 1 → **strip a trailing hallucination** → optional La
 
 > **Why the split?** `AppDelegate` used to hold all of this inline (it was a 400-line
 > "God object"). Extracting `DictationController` gives the pipeline one clear job and
-> makes it independently testable. The controller reports back through closures
-> (`onStatus`, `onDelivered`, `onWarning`) instead of reaching into the UI — so it
-> stays UI-agnostic.
+> makes it independently testable — `DictationControllerTests` does exactly that, driving
+> `press()`/`release()` with fakes at every port (docs/testing.md, level 2). The
+> controller reports back through closures (`onStatus`, `onDelivered`, `onWarning`)
+> instead of reaching into the UI — so it stays UI-agnostic.
 
 > **One hard-won detail** (worth reading in the code comments): opening the audio engine
 > is slow, so `press()` starts it on a background queue (`micControlQueue`), never on the
