@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // swap in a fresh one now so dictation works without relaunching. Invisible to the
             // user; if the mic runs warm, restart it immediately.
             self.capture.reset()
-            if !self.settingsStore.settings.micOnlyWhileDictating { try? self.capture.start() }
+            if !self.settingsStore.settings.micOnlyWhileDictating { self.startWarmMic() }
         }
         // React to settings changes from the window (drop the initial current-value emission).
         settingsCancellable = settingsStore.$settings
@@ -308,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cleaner: cleaner,
             vocabulary: vocabulary,
             history: history,
-            settings: settingsStore
+            options: { [settingsStore] in settingsStore.settings.dictationOptions }
         )
         controller.isCleanupReady = { [weak self] in self?.cleanupState == .ready }
         controller.onStatus = { [weak self] in self?.setStatus($0) }
@@ -317,7 +317,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             chacharLog("dictation warning: \(text)")
             self?.flash(text)
         }
+        controller.frontmostApp = {
+            let app = NSWorkspace.shared.frontmostApplication
+            return FrontmostApp(bundleID: app?.bundleIdentifier, name: app?.localizedName)
+        }
         return controller
+    }
+
+    /// Open the warm mic (the "keep it warm" mode), surfacing a failure instead of swallowing it:
+    /// the input device may be mid-switch (AirPods) and `start()` throws in that window. The next
+    /// push-to-talk press retries regardless, so this failure is transient — but the user must be
+    /// able to see why the mic indicator didn't come on.
+    private func startWarmMic() {
+        do {
+            try capture.start()
+        } catch {
+            setStatus("Mic error")
+            chacharLog("warm mic start FAILED: \(error)")
+            flash("Microphone unavailable: \(error.localizedDescription)")
+        }
     }
 
     // MARK: Settings application
@@ -348,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if previous.micOnlyWhileDictating != settings.micOnlyWhileDictating {
             // Apply immediately: release the warm mic now, or re-warm it.
-            if settings.micOnlyWhileDictating { capture.stop() } else { try? capture.start() }
+            if settings.micOnlyWhileDictating { capture.stop() } else { startWarmMic() }
         }
         if previous.historyRetentionLimit != settings.historyRetentionLimit,
            settings.historyRetentionLimit > 0 {

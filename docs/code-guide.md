@@ -185,6 +185,12 @@ classDiagram
         <<protocol>>
         +inject()
     }
+    class AudioCapturing {
+        <<protocol>>
+        +start()
+        +beginUtterance()
+        +endUtterance()
+    }
     class WhisperKitTranscriber
     class MLXTextCleaner
     class DictionaryCorrector
@@ -199,7 +205,7 @@ classDiagram
     AppDelegate --> Transcriber : holds any
     AppDelegate --> TextCleaner : holds any
     AppDelegate --> SettingsStore
-    DictationController --> MicrophoneCapture
+    DictationController --> AudioCapturing
     DictationController --> Transcriber
     DictationController --> Corrector
     DictationController --> TextCleaner
@@ -211,6 +217,7 @@ classDiagram
     DictionaryCorrector ..|> Corrector
     FuzzyGlossaryCorrector ..|> Corrector
     PasteboardInjector ..|> TextInjector
+    MicrophoneCapture ..|> AudioCapturing
 ```
 
 Read the diagram in three layers:
@@ -221,11 +228,12 @@ Read the diagram in three layers:
 - **`DictationController`** (middle) — the pipeline. It doesn't *own* anything heavy;
   it holds shared references and talks only to **ports**.
 - **Ports & adapters** (bottom) — `Transcriber`, `TextCleaner`, `Corrector`,
-  `TextInjector` are protocols (the *ports*); `WhisperKitTranscriber`, `MLXTextCleaner`,
-  `DictionaryCorrector` / `FuzzyGlossaryCorrector`, `PasteboardInjector` are the
-  concrete *adapters*. `..|>` means "implements". This is **hexagonal architecture**:
-  the app depends on the port so the adapter can be swapped without touching the
-  pipeline.
+  `TextInjector`, `AudioCapturing` are protocols (the *ports*); `WhisperKitTranscriber`,
+  `MLXTextCleaner`, `DictionaryCorrector` / `FuzzyGlossaryCorrector`,
+  `PasteboardInjector`, `MicrophoneCapture` are the concrete *adapters*. `..|>` means
+  "implements". This is **hexagonal architecture**: the app depends on the port so the
+  adapter can be swapped without touching the pipeline — and so the tests can swap in
+  fakes (see docs/testing.md).
 
 > **Swift phrasebook.**
 > - `protocol` — an interface (a *port*). `..|>` in the diagram = conforms to.
@@ -305,9 +313,10 @@ After `startUp()` the app sits idle at station 1, waiting for a key press.
 
 ## Chapter 6 — The heartbeat: one press, one dictation
 
-This is the chapter to understand deeply. Since the last refactor, the pipeline lives in
-its own class, **`DictationController`** (`Sources/ChacharApp/DictationController.swift`).
-`AppDelegate` just forwards key events to it and supplies callbacks:
+This is the chapter to understand deeply. The pipeline lives in its own class,
+**`DictationController`** (`Sources/ChacharCore/Dictation/DictationController.swift` —
+in ChacharCore, behind ports, so the whole pipeline is unit-testable with fakes; see
+docs/testing.md). `AppDelegate` just forwards key events to it and supplies callbacks:
 
 - key down → `dictation.press()`
 - key up → `dictation.release()`
@@ -477,7 +486,10 @@ an Objective-C exception Swift cannot catch, which aborts the process. So `start
 always builds a *fresh* engine (re-querying the hardware, a few ms), and an
 `AVAudioEngineConfigurationChange` observer rebuilds and restarts a running engine when
 the device or its format changes mid-flight (Bluetooth mics renegotiate their format the
-moment capture begins, stopping the engine silently).
+moment capture begins, stopping the engine silently). If that in-place restart fails
+(the device is still settling), the next push-to-talk press retries — `press()` attempts
+`start()` in both mic modes precisely so a failed rebuild can never leave the warm mic
+silently dead.
 
 How the audio actually flows: `start()` installs a **tap** on the engine's input node — a
 callback that receives every ~4096-frame buffer the microphone produces, in the
