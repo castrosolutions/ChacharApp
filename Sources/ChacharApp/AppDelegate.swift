@@ -20,11 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// True only while the first-run default-model download is in flight. Stale progress callbacks
     /// check it before writing `runtimeStatus.asr`, so they can't clobber the terminal states.
     private var downloadingDefaultModel = false
-    private let hud = HUDController()
-    /// On-screen text-preview pop-up. DISABLED per UX preference — it blocks the view and
-    /// dictation already works well (esp. with Right ⌘). HUDController code is kept; flip to
-    /// `true` to re-enable, or repurpose the HUD later (e.g. a subtle recording indicator).
-    private let showHUD = false
     private let vocabulary = VocabularyStore(url: VocabularyStore.defaultURL())
     private let history = HistoryStore(url: HistoryStore.defaultURL())   // local dictation log
     private let cleaner: any TextCleaner = MLXTextCleaner()            // Layer 2 (local LLM)
@@ -40,6 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// First-run setup guide (permissions + model download as a live checklist). Auto-shown while
     /// setup is incomplete; reopenable from the status menu.
     private lazy var onboarding = OnboardingController(store: settingsStore, status: runtimeStatus)
+    /// The floating pill that makes the app's waits visible: the speech model loading at launch,
+    /// the mic listening (with a live level meter), and the pipeline working after key release.
+    /// Reads the mic level straight off the capture, and stands down while the setup guide is up —
+    /// that window already shows the model's download progress.
+    private lazy var overlay = StatusOverlayController(
+        status: runtimeStatus,
+        level: { [capture] in capture.inputLevel },
+        isSuppressed: { [weak self] in self?.onboarding.isVisible ?? false }
+    )
     private lazy var asrController = ASRModelController(
         store: settingsStore,
         status: runtimeStatus,
@@ -88,6 +92,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appliedSettings = settingsStore.settings
         setupStatusItem()
         setStatus("Starting…")
+        // Arm the overlay before startUp(): the model load it reports on begins moments from now,
+        // and creating its panel up front means the first push-to-talk press pays nothing for it.
+        overlay.isEnabled = settingsStore.settings.showStatusOverlay
+        overlay.start()
+        // The guide covers the same model download; hand the pill back (or take it away) as it
+        // opens and closes.
+        onboarding.onVisibilityChanged = { [weak self] in self?.overlay.refresh() }
         onboarding.retryModel = { [weak self] in
             guard let self else { return }
             Task { await self.loadASRModel(path: self.settingsStore.settings.asrModelPath) }
@@ -312,7 +323,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         controller.isCleanupReady = { [weak self] in self?.cleanupState == .ready }
         controller.onStatus = { [weak self] in self?.setStatus($0) }
-        controller.onDelivered = { [weak self] in self?.flash($0) }
+        controller.onPhase = { [weak self] in self?.overlay.setPhase($0) }
+        // Not shown on screen: the overlay reports *that* a dictation landed, never its text (an
+        // earlier HUD previewed the transcription and covered what you were writing).
+        controller.onDelivered = { chacharLog("delivered [\($0)]") }
         controller.onWarning = { [weak self] text in
             chacharLog("dictation warning: \(text)")
             self?.flash(text)
@@ -363,6 +377,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if previous.pttTriggers != settings.pttTriggers || previous.pttToggleMode != settings.pttToggleMode {
             rebuildHotkey(Array(settings.pttTriggers), toggleMode: settings.pttToggleMode)
+        }
+        if previous.showStatusOverlay != settings.showStatusOverlay {
+            overlay.isEnabled = settings.showStatusOverlay // pushed, not read back: see `isEnabled`
         }
         if previous.micOnlyWhileDictating != settings.micOnlyWhileDictating {
             // Apply immediately: release the warm mic now, or re-warm it.
@@ -515,11 +532,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
-    /// Show the HUD only when enabled (see `showHUD`). Centralises the gate so the pop-up stays
-    /// off everywhere while the HUDController code remains intact.
+    /// Surface a problem on screen for a few seconds (and it is always also in the log).
+    ///
+    /// Overlaps by design with the `.failed` phase the pipeline reports for the same errors: the
+    /// phase exists to clear the spinner, this exists so warnings *without* a phase — a malformed
+    /// `vocabulary.json`, a model that wouldn't download — are visible too. Posting the same
+    /// message twice just re-arms one notice.
     private func flash(_ text: String) {
-        guard showHUD else { return }
-        hud.show(text)
+        overlay.flash(text)
     }
 
     private func setStatus(_ text: String) {

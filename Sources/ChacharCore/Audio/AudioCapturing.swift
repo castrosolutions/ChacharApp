@@ -14,4 +14,14 @@ public protocol AudioCapturing: Sendable {
     func beginUtterance()
     /// Stop accumulating and return the utterance's samples (key up).
     func endUtterance() -> AudioSamples
+    /// Loudness of the most recently captured audio, 0…1, for a live level meter (see
+    /// ``AudioLevelMeter``). Only meaningful between `beginUtterance()` and `endUtterance()`;
+    /// 0 the rest of the time.
+    var inputLevel: Float { get }
+}
+
+public extension AudioCapturing {
+    /// Adapters without metering (the test fakes) report silence rather than having to implement
+    /// a meter they don't have — a flat level meter is the honest rendering of "no signal here".
+    var inputLevel: Float { 0 }
 }

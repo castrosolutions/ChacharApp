@@ -91,6 +91,19 @@ private struct GeneralSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section {
+                Toggle("Show the floating status indicator", isOn: $store.settings.showStatusOverlay)
+            } header: {
+                Text("On-screen feedback")
+            } footer: {
+                Text("A small pill near the bottom of the screen shows a live microphone level "
+                     + "while you dictate, a spinner while your words are being transcribed, and "
+                     + "the speech model's progress while it loads at launch. It never takes "
+                     + "focus and can't be clicked — turn it off to rely on the menu-bar status "
+                     + "alone.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Recognition") {
                 Picker("Spoken language", selection: languageSelection) {
                     ForEach(ASRLanguageOption.catalog) { Text($0.label).tag($0.id) }

@@ -20,6 +20,10 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// the cost of the indicator staying on. Default true (privacy-friendly: the indicator only
     /// appears while you dictate); flip it off in Settings for the fastest, always-warm response.
     var micOnlyWhileDictating: Bool = true
+    /// Show the floating status pill (recording level meter, transcription spinner, model-loading
+    /// progress). On by default: those waits are otherwise invisible. Off leaves only the menu-bar
+    /// status line — dictation itself is unaffected.
+    var showStatusOverlay: Bool = true
     /// Spoken-language hint for the ASR. `nil` = auto-detect.
     var asrLanguage: String? = "es"
     /// Phonetic/fuzzy matching of glossary terms (Layer 1) — catches misheard jargon without an
@@ -62,6 +66,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         pttTriggers = try container.decodeIfPresent(Set<PushToTalkTrigger>.self, forKey: .pttTriggers) ?? defaults.pttTriggers
         pttToggleMode = try container.decodeIfPresent(Bool.self, forKey: .pttToggleMode) ?? defaults.pttToggleMode
         micOnlyWhileDictating = try container.decodeIfPresent(Bool.self, forKey: .micOnlyWhileDictating) ?? defaults.micOnlyWhileDictating
+        showStatusOverlay = try container.decodeIfPresent(Bool.self, forKey: .showStatusOverlay) ?? defaults.showStatusOverlay
         // asrLanguage is itself optional (nil = auto-detect), so distinguish "absent" from "null".
         asrLanguage = container.contains(.asrLanguage)
             ? try container.decode(String?.self, forKey: .asrLanguage)

@@ -194,7 +194,12 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       latency. Mic engine start/stop runs off the event-tap thread so it never stalls key handling.
 - [x] **Hands-free PTT mode** (optional) — press to start, press again to stop. Default is
       classic hold-to-talk (record only while held).
-- [ ] **Recording indicator** (repurpose the disabled HUD or animate the menu-bar icon).
+- [x] **Status overlay** — a floating, click-through pill at the bottom of the active screen that
+      makes the three invisible waits explicit: a live microphone level meter while recording, a
+      spinner while transcribing (and while Layer 2 cleans up), and the speech model's load /
+      download progress at launch. Replaces the old text-preview HUD (which covered what you were
+      writing); it shows state, never dictated text. Driven by a typed `DictationPhase` stream
+      rather than by parsing the status strings. Toggle in Settings → General.
 - [x] **Separate dev/prod signing identity** (done): the local build (`make-app.sh`/`install.sh`)
       uses `com.juanpablocastro.chacharapp.dev` + display name "ChacharApp (dev)", so its TCC grants
       no longer collide with the notarized build's clean id (same id + a different cert had made macOS

@@ -55,12 +55,14 @@ flowchart LR
 The program spends >99% of its life idle, waiting at station 1. When you press the
 key, a single pass flows 1 → 2 → 3 → 4 → 5, and then it goes back to idle.
 
-Two support systems sit beside the line:
+Three support systems sit beside the line:
 
 - **Settings** — the window and menu where you choose your key, models, whether
   cleanup is on, etc. Changes apply live (Chapter 6).
 - **Persistence** — three small on-disk stores: your vocabulary, your dictation
   history, and your preferences (Chapter 8).
+- **The status overlay** — a floating pill that narrates the line's waits back to you:
+  the model loading at launch, the mic listening, the pipeline working (Chapter 8b).
 
 ---
 
@@ -420,8 +422,17 @@ Layer 1 → fuzzy Layer 1 → **strip a trailing hallucination** → optional La
 > "God object"). Extracting `DictationController` gives the pipeline one clear job and
 > makes it independently testable — `DictationControllerTests` does exactly that, driving
 > `press()`/`release()` with fakes at every port (docs/testing.md, level 2). The
-> controller reports back through closures (`onStatus`, `onDelivered`, `onWarning`)
-> instead of reaching into the UI — so it stays UI-agnostic.
+> controller reports back through closures (`onStatus`, `onPhase`, `onDelivered`,
+> `onWarning`) instead of reaching into the UI — so it stays UI-agnostic.
+
+One of those callbacks deserves a note, because it exists purely so the UI can stay
+honest. `onStatus` emits an English sentence for the menu bar; **`onPhase` emits the same
+journey as data** — a `DictationPhase` value (`listening`, `transcribing`, `cleaningUp`,
+then one of `finished` / `noSpeech` / `cancelled` / `failed(reason)`). The floating
+overlay (Chapter 8b) renders that enum. The alternative — having the overlay match on the
+string `"… Transcribing"` — would make the status *wording* load-bearing, so rephrasing
+one sentence would silently break a spinner. Two callbacks emitted side by side keep prose
+as prose and state as state.
 
 > **One hard-won detail** (worth reading in the code comments): opening the audio engine
 > is slow, so `press()` starts it on a background queue (`micControlQueue`), never on the
@@ -508,7 +519,9 @@ hardware's native format (typically 48 kHz stereo). Each buffer is pushed throug
 `AVAudioConverter` down to 16 kHz mono on the spot, then appended to `collected` — but
 only while `isCollecting` is true. That flag is the whole "warm mic" economics: when
 you're not dictating, buffers still arrive, fail the flag check, and are dropped, so
-keeping the engine open costs almost nothing.
+keeping the engine open costs almost nothing. The same guarded block also records each
+buffer's loudness (`inputLevel`, via `AudioLevelMeter`) — that is what the overlay's level
+meter reads, and why it goes flat the instant collecting stops (Chapter 8b).
 
 One curiosity for the road: the converter pulls its input through a callback, and Swift 6
 requires that callback to be `@Sendable` — it may not capture a mutable local variable.
@@ -737,6 +750,63 @@ actually changed.
 
 ---
 
+## Chapter 8b — The status overlay (making the waits visible)
+
+The app has three moments where it is busy and *looks* dead: the speech model loading at
+launch (seconds on a cold boot — see [`latency.md`](latency.md)), the microphone
+listening, and the pipeline transcribing after you let the key go. The menu-bar status
+line says all three, but nobody watches the menu bar while dictating into another app.
+
+`Sources/ChacharApp/Overlay/` is the answer: a small floating pill, bottom-centre of the
+screen you're looking at, that shows a live level meter while recording, a spinner while
+the pipeline runs, and a progress bar while the model loads.
+
+It reads from three inputs and collapses them into one decision:
+
+```mermaid
+flowchart LR
+    P["DictationController<br/>onPhase"] --> R{{"render()"}}
+    M["RuntimeStatus.asr<br/>(loading / downloading)"] --> R
+    W["AppDelegate<br/>flash(message)"] --> R
+    R -->|"notice → phase → model"| C["Content<br/>(listening / working /<br/>progress / notice)"]
+    C --> V["StatusOverlayView<br/>in an NSPanel"]
+    L["MicrophoneCapture<br/>inputLevel"] -.->|30 Hz poll| V
+```
+
+Five decisions in here are worth knowing before you touch it:
+
+- **It shows state, never content.** An earlier `HUDController` previewed the transcribed
+  text and was switched off because it covered what you were writing. Keeping dictated
+  text out is exactly what lets this one stay small enough to leave on.
+- **The panel must never take focus.** It's a `.nonactivatingPanel`, never made key, and
+  `ignoresMouseEvents`. The whole app depends on the frontmost app *staying* frontmost —
+  that's where the ⌘V lands (Chapter 7, station 5). It also joins all Spaces and sits at
+  `.statusBar` level so it survives full-screen apps.
+- **One `render()`, one priority order.** Every input funnels through a single method that
+  picks: a short-lived notice → the live pipeline phase → the model still loading →
+  nothing. Terminal phases (`finished`, `cancelled`, …) never linger as state; they
+  immediately become a self-dismissing notice. Scattering `show`/`hide` calls across the
+  inputs is how overlays end up stuck on screen.
+- **A grace period timed from when the model *became* busy.** Model state is held back
+  350 ms so a fast load doesn't flash a pill. The subtlety: a download reports progress
+  many times a second, so re-arming that timer on each report would postpone the pill past
+  the end of the download it exists to explain. The timer starts on the *transition* into
+  busy and is never restarted while it stays busy.
+- **The panel's frame is fixed, its content is not.** The window is transparent and
+  click-through, so an oversized frame costs nothing — and not resizing per state avoids
+  fighting SwiftUI, which reports a new fitting size a runloop turn *after* the state
+  changes. The pill lays itself out inside that frame.
+
+The level meter is the one part that reaches back into the audio path.
+`MicrophoneCapture` computes an RMS level for each converted buffer (`AudioLevelMeter`,
+mapped in **dB** — a linear meter hugs zero for ordinary speech) and stores it under the
+same lock as the samples. The overlay *polls* that value 30×/s rather than being pushed
+from the real-time thread, then applies a fast-attack / slow-release envelope: buffers
+arrive every ~85 ms, so raw readings would step, and the envelope turns them into
+something voice-shaped. Nothing on the audio thread ever waits on the UI.
+
+---
+
 ## Chapter 9 — How the code stays thread-safe (concurrency)
 
 ChacharApp touches three tricky execution contexts: the **main thread** (UI + the event
@@ -861,6 +931,8 @@ shared Hugging Face cache, so a fresh install ships no LLM and dictation works w
 | Add a settings option | `AppSettings.swift` → `SettingsView.swift` → handle in `AppDelegate.applySettings` |
 | Change a default model / the sample rate | `ChacharCore/Defaults.swift` / `AudioSamples.whisperSampleRate` |
 | Support a new/downloadable model | `ModelCatalog.swift` + `ASRModelController.swift` |
+| Change the floating indicator's look | `Overlay/StatusOverlayView.swift` (pill, level meter) |
+| Change *when* the indicator appears | `Overlay/StatusOverlayController.swift` (`render`) + `DictationPhase` |
 | Change how text is inserted | `TextInjector.swift` (`PasteboardInjector`) |
 | Tune the clipboard save/restore | `TextInjector.swift` (`restoreDelay`, the concealed-type marker, the `changeCount` guard) |
 | Adjust startup order | `AppDelegate.startUp()` |
@@ -889,9 +961,10 @@ Sources/
 ├── ChacharApp/                     the menu-bar app (UI + composition root)
 │   ├── main.swift                  ← entry point (Ch. 3)
 │   ├── AppDelegate.swift           ← composition root + lifecycle (Ch. 4–5)
-│   ├── DictationController.swift   ← the press→inject pipeline (Ch. 6)
 │   ├── HotkeyMonitor.swift         station 1 — PTT key (Ch. 7)
-│   ├── HUDController.swift         optional on-screen HUD (currently unused)
+│   ├── Overlay/                    floating status pill (Ch. 8b)
+│   │   ├── StatusOverlayController.swift owns the panel + the state machine
+│   │   └── StatusOverlayView.swift       SwiftUI pill (level meter / spinner / progress)
 │   ├── Onboarding/                 first-run setup guide (Ch. 8)
 │   │   ├── OnboardingController.swift  owns the window; polls the TCC grants
 │   │   └── OnboardingView.swift        SwiftUI checklist (permissions + model download)
@@ -909,8 +982,13 @@ Sources/
 ├── ChacharCore/                    engine-agnostic core (no MLX; unit-tested)
 │   ├── KeyCode.swift               named virtual key codes (Ch. 7)
 │   ├── Defaults.swift              domain typealiases + default model ids (Ch. 2, 10)
-│   ├── Audio/MicrophoneCapture.swift   station 2 — mic (Ch. 7, 9)
+│   ├── Audio/AudioCapturing.swift      station 2 — capture port (+ level meter)
+│   ├── Audio/MicrophoneCapture.swift   station 2 — mic adapter (Ch. 7, 9)
+│   ├── Audio/AudioLevelMeter.swift      RMS → 0…1 level for the overlay (Ch. 8b)
 │   ├── Audio/SilenceTrim.swift          trailing-silence trim (pre-ASR, Ch. 7)
+│   ├── Dictation/DictationController.swift ← the press→inject pipeline (Ch. 6)
+│   ├── Dictation/DictationOptions.swift    the settings slice the pipeline reads
+│   ├── Dictation/DictationPhase.swift      typed pipeline state for the UI (Ch. 6, 8b)
 │   ├── ASR/Transcriber.swift           station 3 — port + value types
 │   ├── ASR/WhisperKitTranscriber.swift station 3 — adapter (actor)
 │   ├── ASR/ASRModelManager.swift       model folders: locate/validate/download

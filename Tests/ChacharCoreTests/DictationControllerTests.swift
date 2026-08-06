@@ -55,8 +55,12 @@ final class DictationControllerTests: XCTestCase {
     }
 
     private final class FakeTranscriber: Transcriber, @unchecked Sendable {
+        /// A recognisable engine failure, so tests can drive the pipeline's error path.
+        struct Failure: LocalizedError { var errorDescription: String? { "the model gave up" } }
+
         private let lock = NSLock()
         private var _calls = 0
+        private var _failNext = false
         private let canned: String
 
         init(returning text: String) { canned = text }
@@ -66,12 +70,24 @@ final class DictationControllerTests: XCTestCase {
             return _calls
         }
 
+        /// Make the next `transcribe` throw.
+        var failNext: Bool {
+            get { lock.withLock { _failNext } }
+            set { lock.withLock { _failNext = newValue } }
+        }
+
         // Sync helper: NSLock.lock() is unavailable directly inside async methods.
-        private func recordCall() { lock.withLock { _calls += 1 } }
+        private func recordCall() -> Bool {
+            lock.withLock {
+                _calls += 1
+                defer { _failNext = false }
+                return _failNext
+            }
+        }
 
         func prepare() async throws {}
         func transcribe(_ samples: AudioSamples, prompt: String?) async throws -> Transcription {
-            recordCall()
+            if recordCall() { throw Failure() }
             return Transcription(text: canned, duration: 0.25)
         }
         func update(language: LanguageCode?) async {}
@@ -96,6 +112,7 @@ final class DictationControllerTests: XCTestCase {
         var statuses: [String] = []
         var delivered: [String] = []
         var warnings: [String] = []
+        var phases: [DictationPhase] = []
     }
 
     // MARK: Harness
@@ -133,17 +150,35 @@ final class DictationControllerTests: XCTestCase {
         controller.onStatus = { recorder.statuses.append($0) }
         controller.onDelivered = { recorder.delivered.append($0) }
         controller.onWarning = { recorder.warnings.append($0) }
+        controller.onPhase = { recorder.phases.append($0) }
         controller.frontmostApp = { FrontmostApp(bundleID: "com.example.editor", name: "Editor") }
         return Harness(controller: controller, capture: capture, transcriber: transcriber,
                        injector: injector, recorder: recorder, history: history)
     }
 
-    private static func options(micOnlyWhileDictating: Bool) -> DictationOptions {
+    private static func options(micOnlyWhileDictating: Bool,
+                                cleanupEnabled: Bool = false) -> DictationOptions {
         DictationOptions(micOnlyWhileDictating: micOnlyWhileDictating,
-                         cleanupEnabled: false,
+                         cleanupEnabled: cleanupEnabled,
                          fuzzyGlossaryEnabled: true,
                          trailingHallucinationFilter: true,
                          historyEnabled: true)
+    }
+
+    /// Wait until the controller reports `phase`, then return everything it reported. Phases are
+    /// emitted from the async pipeline, so tests must synchronize on one rather than sleep.
+    @MainActor
+    private func awaitPhase(_ phase: DictationPhase,
+                            in harness: Harness,
+                            during action: () -> Void) async -> [DictationPhase] {
+        let reached = expectation(description: "phase \(phase)")
+        harness.controller.onPhase = { [recorder = harness.recorder] reported in
+            recorder.phases.append(reported)
+            if reported == phase { reached.fulfill() }
+        }
+        action()
+        await fulfillment(of: [reached], timeout: 2)
+        return harness.recorder.phases
     }
 
     /// Press and wait until the fake capture has seen the resulting `start()` attempt (press hops
@@ -249,5 +284,125 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(harness.transcriber.transcribeCalls, 0)
         XCTAssertTrue(harness.injector.injected.isEmpty)
         XCTAssertEqual(harness.recorder.statuses.last, "Cancelled")
+    }
+
+    // MARK: Phases
+    //
+    // `onPhase` is what the floating status overlay renders, so these pin the *sequence*: a phase
+    // that never arrives leaves the overlay stuck showing the previous one (a spinner that spins
+    // forever), and a spurious one flashes a pill for something that didn't happen.
+
+    /// The whole journey of one ordinary dictation, in order.
+    @MainActor
+    func testPhasesFollowOneDictationEndToEnd() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.1, -0.2, 0.3]))
+        await pressAndAwaitStartAttempt(harness)
+
+        let phases = await awaitPhase(.finished, in: harness) { harness.controller.release() }
+        XCTAssertEqual(phases, [.listening, .transcribing, .finished])
+    }
+
+    /// Layer 2 announces itself: without `.cleaningUp` the overlay would show "Transcribing…"
+    /// through the seconds the LLM takes, which is the slowest wait in the app.
+    @MainActor
+    func testCleanupReportsItsOwnPhase() async {
+        let harness = makeHarness(
+            options: Self.options(micOnlyWhileDictating: true, cleanupEnabled: true),
+            capture: FakeCapture(samples: [0.1, -0.2, 0.3]))
+        harness.controller.isCleanupReady = { true }
+        await pressAndAwaitStartAttempt(harness)
+
+        let phases = await awaitPhase(.finished, in: harness) { harness.controller.release() }
+        XCTAssertEqual(phases, [.listening, .transcribing, .cleaningUp, .finished])
+    }
+
+    /// An empty capture ends at `.noSpeech`, not `.finished` — nothing was inserted.
+    @MainActor
+    func testEmptyCaptureEndsAtNoSpeechPhase() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: []))
+        await pressAndAwaitStartAttempt(harness)
+        harness.controller.release()
+
+        XCTAssertEqual(harness.recorder.phases, [.listening, .noSpeech])
+    }
+
+    /// A transcription that survives the correction layers as pure whitespace also ends at
+    /// `.noSpeech`: the pipeline ran to completion, but nothing reached the focused app.
+    @MainActor
+    func testBlankTranscriptionEndsAtNoSpeechPhase() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.1]),
+                                  transcribing: "   ")
+        await pressAndAwaitStartAttempt(harness)
+
+        let phases = await awaitPhase(.noSpeech, in: harness) { harness.controller.release() }
+        XCTAssertEqual(phases, [.listening, .transcribing, .noSpeech])
+        XCTAssertTrue(harness.injector.injected.isEmpty)
+    }
+
+    /// A mic that won't open reports `.failed` carrying the reason, and `release()` must not
+    /// follow it with `.noSpeech` — that would replace the cause with a symptom (the same
+    /// masking the status line is guarded against).
+    @MainActor
+    func testMicStartFailureReportsFailedPhaseAndIsNotMasked() async {
+        let harness = makeHarness(
+            options: Self.options(micOnlyWhileDictating: true),
+            capture: FakeCapture(samples: [], startError: MicrophoneCaptureError.inputUnavailable))
+
+        let failed = expectation(description: "failure phase reported")
+        harness.controller.onPhase = { [recorder = harness.recorder] phase in
+            recorder.phases.append(phase)
+            if case .failed = phase { failed.fulfill() }
+        }
+        harness.controller.press()
+        await fulfillment(of: [failed], timeout: 2)
+
+        harness.controller.release()
+
+        XCTAssertEqual(harness.recorder.phases.count, 2, "got \(harness.recorder.phases)")
+        XCTAssertEqual(harness.recorder.phases.first, .listening)
+        guard case .failed(let reason) = harness.recorder.phases.last else {
+            return XCTFail("expected a .failed phase, got \(harness.recorder.phases)")
+        }
+        XCTAssertTrue(reason.contains("microphone"), "the reason must name the cause: \(reason)")
+    }
+
+    /// ESC ends the dictation explicitly, so the overlay can stop listening rather than wait for a
+    /// pipeline that will never run.
+    @MainActor
+    func testCancelReportsCancelledPhase() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.5, 0.5]))
+        await pressAndAwaitStartAttempt(harness)
+        harness.controller.cancel()
+
+        XCTAssertEqual(harness.recorder.phases, [.listening, .cancelled])
+    }
+
+    /// A transcription failure must end the run: `.failed` clears the spinner and names the cause.
+    @MainActor
+    func testTranscriptionFailureReportsFailedPhase() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.1]),
+                                  transcribing: "unused")
+        harness.transcriber.failNext = true
+        await pressAndAwaitStartAttempt(harness)
+
+        let failed = expectation(description: "failure phase reported")
+        harness.controller.onPhase = { [recorder = harness.recorder] phase in
+            recorder.phases.append(phase)
+            if case .failed = phase { failed.fulfill() }
+        }
+        harness.controller.release()
+        await fulfillment(of: [failed], timeout: 2)
+
+        XCTAssertEqual(harness.recorder.phases.count, 3, "got \(harness.recorder.phases)")
+        guard case .failed(let reason) = harness.recorder.phases.last else {
+            return XCTFail("expected a .failed phase, got \(harness.recorder.phases)")
+        }
+        XCTAssertTrue(reason.hasPrefix("Transcription failed:"), "got \(reason)")
+        XCTAssertTrue(harness.injector.injected.isEmpty)
     }
 }

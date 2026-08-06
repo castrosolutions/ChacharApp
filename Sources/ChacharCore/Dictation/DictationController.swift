@@ -49,6 +49,10 @@ public final class DictationController {
     public var isCleanupReady: () -> Bool = { false }
     /// Report a user-visible status line (menu-bar status item).
     public var onStatus: (String) -> Void = { _ in }
+    /// Typed counterpart of `onStatus`, always emitted alongside it: the pipeline's state as data,
+    /// for UI that must react to *what* is happening rather than to its wording (the floating
+    /// status overlay). See ``DictationPhase``.
+    public var onPhase: (DictationPhase) -> Void = { _ in }
     /// Called with the final text once it has been injected (e.g. to flash a HUD).
     public var onDelivered: (String) -> Void = { _ in }
     /// Non-fatal warnings worth surfacing (e.g. a malformed `vocabulary.json` was ignored).
@@ -94,12 +98,14 @@ public final class DictationController {
                 Task { @MainActor in
                     self.micStartFailed = true
                     self.onStatus("Mic error")
+                    self.onPhase(.failed("Could not open the microphone: \(error.localizedDescription)"))
                     self.onWarning("Could not open the microphone: \(error.localizedDescription)")
                 }
             }
         }
         capture.beginUtterance()
         onStatus("● Listening…")
+        onPhase(.listening)
     }
 
     /// Key up: stop capturing and run the transcription pipeline on the recorded audio.
@@ -118,12 +124,16 @@ public final class DictationController {
         guard !samples.values.isEmpty else {
             if !micStartFailed {
                 onStatus("Ready")
+                onPhase(.noSpeech)
                 onDelivered("(no speech detected)")
             }
+            // On a mic failure the `.failed` phase raised by `press()` stands: it names the cause,
+            // which "no speech" would replace with a symptom.
             return
         }
 
         onStatus("… Transcribing")
+        onPhase(.transcribing)
 
         let vocab = vocabulary.reloadIfChanged()                 // pick up hand-edits
         if let parseError = vocabulary.lastParseError { onWarning(parseError) }
@@ -146,6 +156,7 @@ public final class DictationController {
             micControlQueue.async { self.capture.stop() }
         }
         onStatus("Cancelled")
+        onPhase(.cancelled)
     }
 
     // MARK: Pipeline
@@ -175,14 +186,17 @@ public final class DictationController {
             var didCleanup = false
             if runCleanup {                                    // Layer 2: local LLM cleanup
                 onStatus("… Cleaning up")
+                onPhase(.cleaningUp)
                 if let cleaned = try? await cleaner.clean(output) { output = cleaned; didCleanup = true }
             }
-            deliver(output)
+            let injected = deliver(output)
             recordHistory(raw: result.text, inserted: output, cleanupApplied: didCleanup,
                           duration: result.duration, historyEnabled: options.historyEnabled)
             onStatus(String(format: "Ready  (last: %.1fs)", result.duration))
+            onPhase(injected ? .finished : .noSpeech)
         } catch {
             onStatus("Transcription error")
+            onPhase(.failed("Transcription failed: \(error.localizedDescription)"))
             onWarning("Transcription failed: \(error.localizedDescription)")
         }
     }
@@ -193,11 +207,15 @@ public final class DictationController {
     /// push-to-talk bursts read as one continuous text instead of running together — the target
     /// field can't be inspected (that's why we paste), so this leans on the last-delivery timestamp
     /// and app rather than the character before the cursor.
-    private func deliver(_ text: String) {
+    ///
+    /// Returns whether anything was actually injected, so the caller can report the right outcome
+    /// phase (a transcription that corrects down to nothing is "no speech", not "finished").
+    @discardableResult
+    private func deliver(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             onDelivered("(no speech detected)")
-            return
+            return false
         }
         let frontApp = frontmostApp().bundleID
         let payload = continuesPreviousDictation(inApp: frontApp) ? " " + trimmed : trimmed
@@ -207,6 +225,7 @@ public final class DictationController {
         lastDeliveryApp = frontApp
         contextBrokenSinceDelivery = false // start a fresh run; a Return before the next one ends it
         onDelivered(trimmed)
+        return true
     }
 
     /// Note that the user pressed Return/Enter: the current dictation "run" is over, so the next

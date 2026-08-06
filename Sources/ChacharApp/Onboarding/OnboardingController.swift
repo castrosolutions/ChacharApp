@@ -25,6 +25,9 @@ final class OnboardingController: NSObject, ObservableObject, NSWindowDelegate {
     /// Fires once when the Microphone permission flips to granted, so the app can rebuild the
     /// stale pre-grant audio engine live — no relaunch, nothing visible to the user.
     var onMicGranted: () -> Void = {}
+    /// Fires when the guide opens or closes. The floating status overlay steps aside while this
+    /// window is up (it shows the same model download), and takes over again once it closes.
+    var onVisibilityChanged: () -> Void = {}
 
     private let store: SettingsStore
     let runtimeStatus: RuntimeStatus
@@ -73,6 +76,7 @@ final class OnboardingController: NSObject, ObservableObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         startPolling()
+        onVisibilityChanged()
     }
 
     /// "Start Dictating": record that setup finished so the guide stops auto-opening on launch.
@@ -87,6 +91,9 @@ final class OnboardingController: NSObject, ObservableObject, NSWindowDelegate {
         // Closing the window with everything green counts as finishing, button pressed or not.
         if isComplete { store.settings.onboardingCompleted = true }
         NSApp.setActivationPolicy(.accessory)
+        // `windowWillClose` runs while the window is still on screen, so `isVisible` would still
+        // report true to an observer asking right now. Let them re-evaluate on the next turn.
+        Task { @MainActor [weak self] in self?.onVisibilityChanged() }
     }
 
     /// Trigger the system Microphone prompt (first time) or open its Privacy pane (after a denial —

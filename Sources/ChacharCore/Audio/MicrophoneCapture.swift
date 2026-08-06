@@ -64,6 +64,10 @@ public final class MicrophoneCapture: AudioCapturing, @unchecked Sendable {
     private let bufferLock = NSLock()
     private var isCollecting = false
     private var collected: [Float] = []
+    /// Loudness of the most recent buffer (0…1), for the on-screen level meter. Guarded by
+    /// `bufferLock` alongside the samples it is derived from: written on the RT thread, read from
+    /// the main thread ~30×/s. One `Float` is a far shorter hold than the sample append next to it.
+    private var level: Float = 0
 
     public init() {
         // 16 kHz mono Float32, non-interleaved.
@@ -188,6 +192,7 @@ public final class MicrophoneCapture: AudioCapturing, @unchecked Sendable {
         bufferLock.lock()
         collected.removeAll(keepingCapacity: true)
         isCollecting = true
+        level = 0
         bufferLock.unlock()
     }
 
@@ -197,8 +202,16 @@ public final class MicrophoneCapture: AudioCapturing, @unchecked Sendable {
         isCollecting = false
         let values = collected
         collected.removeAll(keepingCapacity: true)
+        level = 0
         bufferLock.unlock()
         return AudioSamples(values: values, sampleRate: Int(Self.targetSampleRate))
+    }
+
+    /// Loudness of the most recent buffer, 0…1 (see ``AudioLevelMeter``). Drives the recording
+    /// indicator's level meter; 0 whenever no utterance is being collected.
+    public var inputLevel: Float {
+        bufferLock.lock(); defer { bufferLock.unlock() }
+        return level
     }
 
     /// Whether the engine is currently running (mic warm).
@@ -249,9 +262,15 @@ public final class MicrophoneCapture: AudioCapturing, @unchecked Sendable {
         let frames = Int(outBuffer.frameLength)
         let samples = UnsafeBufferPointer(start: channel[0], count: frames)
 
+        // Measure the same converted samples we keep, so the meter shows exactly what the ASR
+        // will hear (a stale level after the last buffer would keep the bars twitching after the
+        // key is released).
+        let measured = AudioLevelMeter.level(of: samples)
+
         bufferLock.lock()
         if isCollecting {
             collected.append(contentsOf: samples)
+            level = measured
         }
         bufferLock.unlock()
     }
