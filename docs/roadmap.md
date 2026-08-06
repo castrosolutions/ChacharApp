@@ -121,7 +121,7 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       end-to-end (first 0.0.1 build notarized). `Scripts/upload-r2.sh` publishes it. *(These
       maintainer scripts are kept local, not in the public repo — see `.gitignore`.)*
 - [ ] **Publish the first release**: the notarized **1.4.1 `.dmg` is live on R2** at
-      `https://dl.juanpablocastro.com/releases/1.4.1/ChacharApp-1.4.1.dmg`. First-run fixes found
+      `https://dl.juanpablocastro.com/releases/1.5.0/ChacharApp-1.5.0.dmg`. First-run fixes found
       by clean-install testing: 1.1.0 added the setup guide; 1.1.1 the missing microphone
       entitlement (a hardened-runtime app without `com.apple.security.device.audio-input` is
       denied the mic silently — no prompt, no row in System Settings); 1.1.2 made the mic-grant
@@ -156,7 +156,16 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       silence — `MicrophoneCapture` now builds a fresh engine per start, validates the format, and
       rebuilds/restarts on an `AVAudioEngineConfigurationChange`; a follow-up hardening surfaced and
       retried every mic-start failure (warm mode had silently kept a dead mic after a failed rebuild),
-      backed by new level-2 `DictationController` tests.
+      backed by new level-2 `DictationController` tests; 1.5.0 made the app's waits visible and
+      stopped it lying about insertions — a floating, click-through **status pill** shows a live
+      microphone level meter while you dictate, a spinner while the text is transcribed (and while
+      Layer 2 cleans up), and the speech model's load/download progress at launch (Settings →
+      General turns it off), replacing the old text-preview HUD; and because ⌘V into an app with no
+      focused text field does nothing and reports nothing, a dictation released over the Finder or
+      an unfocused window used to be announced as "Inserted" while the words went nowhere —
+      `FocusedTextTarget` now probes the focused element first (refusing only for roles it
+      positively recognises as untypeable, so an unfamiliar toolkit can never cost a paste that
+      works today) and the overlay holds the text on screen with **Copy / Discard** until you act.
       Published at
       **github.com/castrosolutions/ChacharApp** with the `.dmg` attached as a GitHub release,
       mirroring R2 (ADR 0002 D3). Remaining: validate the first-download path from a fresh macOS
