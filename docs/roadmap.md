@@ -204,6 +204,12 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       uses `com.juanpablocastro.chacharapp.dev` + display name "ChacharApp (dev)", so its TCC grants
       no longer collide with the notarized build's clean id (same id + a different cert had made macOS
       treat them as different apps that clobbered each other's Mic/Accessibility grants).
+- [x] **Never lose a dictation to a failed paste** — ⌘V into an app with no focused text field
+      does nothing and reports nothing, so the app used to announce an insertion that never
+      happened. `FocusedTextTarget` now probes the focused element first — refusing only for roles
+      it positively recognises as untypeable, so an unfamiliar toolkit can never cost a paste that
+      works today; when there is nowhere to insert, the overlay holds the text on screen with
+      Copy / Discard until the user acts. The verdict is logged under `CHACHARAPP_DEBUG`.
 - [ ] Error handling: model download failure, low disk, model load failure, missing permissions.
 - [ ] Phase 2 **WER spike** — quantify accuracy on a small personal set to track regressions.
 

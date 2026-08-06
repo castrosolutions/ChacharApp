@@ -20,6 +20,10 @@ public enum DictationPhase: Equatable, Sendable {
     case cleaningUp
     /// The final text was injected into the focused app.
     case finished
+    /// The pipeline produced text but the focused app had nowhere to put it (no text field has
+    /// keyboard focus). Carries the text, because at this point the UI is the only thing standing
+    /// between the user and losing what they just said.
+    case notInserted(String)
     /// The utterance yielded nothing to insert — a press too short to capture audio, or silence.
     case noSpeech
     /// The user cancelled with ESC: the audio was discarded, nothing was transcribed or injected.

@@ -663,7 +663,40 @@ universal trick: **save the clipboard → put our text on it → synthesize ⌘V
 old clipboard** a moment later. Riding the normal paste path makes it work in native,
 Electron and web apps alike.
 
-Two guard-rails around the trick: the dictated text is marked with
+The trick has one blind spot, and it is a big one: **⌘V into an app with no focused text
+field does nothing, and says nothing**. No error, no clue — the words are simply gone.
+That is how a dictation could be reported as "inserted" when it wasn't (release the key
+after switching to Finder, or to a browser with nothing focused). So the injector *looks
+before it pastes*: `FocusedTextTarget.probe()` asks the Accessibility API whether the
+focused element can take text, and `inject` returns `.noTextTarget` instead of pasting
+when it can't. The pipeline then reports `DictationPhase.notInserted(text)` and the
+overlay holds the words on screen with a copy button (Chapter 8b).
+
+The probe's verdict is deliberately **three**-valued — `editable` / `none` / `unknown` —
+and the asymmetry between the two ways of being wrong is the whole design. Pasting when we
+shouldn't have costs nothing: it is exactly the old behaviour. *Refusing* to paste when we
+should have would break insertion in an app that works today, and the user would blame the
+app, not the probe. So `unknown` means paste.
+
+Two consequences follow, and they are the parts worth not "simplifying" later:
+
+- **It refuses only for roles it positively recognises as untypeable** (`nonTextRoles`: a
+  file list, a web page, a button, a toolbar…) rather than refusing anything it doesn't
+  recognise as text. An unfamiliar toolkit therefore can't cost the user their words; the
+  list only has to cover where focus actually lands when there is nothing to type into.
+- **It leads with `AXSelectedTextRange`, not the element's role.** A caret is what native
+  fields, web `contenteditable` areas and terminal emulators all have in common, while
+  their roles agree on almost nothing.
+
+The one case that needs no guessing at all is the one that prompted this: nothing anywhere
+holds keyboard focus (the Desktop, a window that was just closed), where the system-wide
+focus query returns `noValue` outright.
+
+Because this decision depends on *other* apps' Accessibility trees, `inject` logs the
+verdict on every insertion under `CHACHARAPP_DEBUG` — when a paste misbehaves in some app,
+what the probe saw is always the first question (`~/chachar-diag.log`).
+
+Two guard-rails around the trick itself: the dictated text is marked with
 `org.nspasteboard.ConcealedType` (the nspasteboard.org convention), so clipboard managers
 like Alfred or Maccy don't record everything you dictate into their history; and the
 restore first checks the pasteboard's `changeCount` — if anything else wrote to the
@@ -796,6 +829,25 @@ Five decisions in here are worth knowing before you touch it:
   click-through, so an oversized frame costs nothing — and not resizing per state avoids
   fighting SwiftUI, which reports a new fitting size a runloop turn *after* the state
   changes. The pill lays itself out inside that frame.
+
+There is a fourth state, and it is the only one that breaks the rules above: the
+**recovery card**. When the paste had nowhere to land (Chapter 7, station 5), the overlay
+stops being a passive read-out and becomes the last place those words exist outside the
+history log. So it:
+
+- **outranks everything, including the Settings toggle** — turning the overlay off is a
+  preference about *status*, and swallowing text the user hasn't rescued would be data
+  loss dressed up as a setting;
+- **never dismisses itself** — only Copy or Discard closes it (starting a new dictation
+  also clears it: that is a deliberate move on, and the text is still in the history log);
+- **takes clicks**, which the pill never does. That is why it gets its own window geometry:
+  a panel sized to the card, rather than the pill's big transparent sheet, which would
+  swallow clicks meant for the app underneath the moment it stopped ignoring the mouse.
+  `ClickableHostingView` accepts the *first* click too — this panel is never key, so every
+  click on it is a first click and would otherwise be spent just focusing the window.
+
+Copy leaves the text on the clipboard for good: no save/restore, and no concealed-type
+marker. The user asked for it to be there.
 
 The level meter is the one part that reaches back into the audio path.
 `MicrophoneCapture` computes an RMS level for each converted buffer (`AudioLevelMeter`,
@@ -934,6 +986,7 @@ shared Hugging Face cache, so a fresh install ships no LLM and dictation works w
 | Change the floating indicator's look | `Overlay/StatusOverlayView.swift` (pill, level meter) |
 | Change *when* the indicator appears | `Overlay/StatusOverlayController.swift` (`render`) + `DictationPhase` |
 | Change how text is inserted | `TextInjector.swift` (`PasteboardInjector`) |
+| Tune when insertion is judged impossible | `FocusedTextTarget.swift` (`probe`, the roles set) |
 | Tune the clipboard save/restore | `TextInjector.swift` (`restoreDelay`, the concealed-type marker, the `changeCount` guard) |
 | Adjust startup order | `AppDelegate.startUp()` |
 
@@ -999,7 +1052,8 @@ Sources/
 │   ├── Correction/Vocabulary.swift         glossary + rules model
 │   ├── Correction/VocabularyStore.swift    vocabulary.json persistence
 │   ├── History/DictationHistory.swift      history.jsonl store
-│   └── Injection/TextInjector.swift        station 5 — paste (Ch. 7)
+│   ├── Injection/TextInjector.swift        station 5 — paste (Ch. 7)
+│   └── Injection/FocusedTextTarget.swift   is there anywhere to paste? (Ch. 7)
 │
 ├── ChacharCleanupMLX/MLXTextCleaner.swift  Layer 2 adapter (local LLM, heavy)
 ├── ChacharSpike/main.swift                 CLI: ASR latency harness (Ch. 11)

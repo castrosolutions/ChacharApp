@@ -11,6 +11,15 @@ enum OverlayContent: Equatable {
     case progress(String, Double)
     /// A short-lived message that dismisses itself.
     case notice(String, OverlayNotice)
+    /// Words that couldn't be inserted anywhere, held on screen with a way to rescue them.
+    /// The only content that is interactive, and the only one that never dismisses itself.
+    case recovery(String)
+
+    /// Whether this content has buttons — which decides whether the panel takes clicks at all.
+    var isInteractive: Bool {
+        if case .recovery = self { return true }
+        return false
+    }
 }
 
 enum OverlayNotice: Equatable { case success, info, failure }
@@ -28,6 +37,10 @@ enum OverlayNotice: Equatable { case success, info, failure }
 struct StatusOverlayView: View {
     let content: OverlayContent?
     let levels: [CGFloat]
+    /// Put the rescued text on the clipboard. Only reachable from ``OverlayContent/recovery(_:)``.
+    var onCopy: () -> Void = {}
+    /// Throw the rescued text away and close the card.
+    var onDiscard: () -> Void = {}
 
     /// Width proposed to the pill. It caps where long messages wrap while leaving short ones free
     /// to hug their content — the pill is *centred* in this box, not stretched to fill it.
@@ -36,6 +49,17 @@ struct StatusOverlayView: View {
     /// bottom edge sits on it).
     static let bottomInset: CGFloat = 56
 
+    /// The recovery card's exact size. Fixed, unlike the pill's: its panel has to take clicks, so
+    /// the window is sized to the card rather than being a big transparent sheet that would
+    /// swallow clicks meant for the app underneath.
+    static let cardSize = CGSize(width: 520, height: 132)
+    /// Breathing room around the card inside its panel, so the drop shadow isn't clipped. Clicks
+    /// in this thin ring are absorbed too — a few points around a floating card nobody aims at.
+    static let cardMargin: CGFloat = 12
+    static var cardPanelSize: CGSize {
+        CGSize(width: cardSize.width + cardMargin * 2, height: cardSize.height + cardMargin * 2)
+    }
+
     private static let cornerRadius: CGFloat = 16
     /// Mic-live green. Deliberately not the orange of macOS's own recording dot: this is app UI
     /// and shouldn't read as a system indicator.
@@ -43,13 +67,21 @@ struct StatusOverlayView: View {
     private static let warningTint = Color(red: 1.00, green: 0.64, blue: 0.32)
 
     var body: some View {
-        Group {
-            if let content { pill(content) }
+        // Two layouts, because the two panels differ: the passive pill floats inside a large
+        // transparent window, while the recovery card *is* its window (see `cardSize`).
+        if case .recovery(let text) = content {
+            recoveryCard(text)
+                .frame(width: Self.cardSize.width, height: Self.cardSize.height)
+                .padding(Self.cardMargin)
+        } else {
+            Group {
+                if let content { pill(content) }
+            }
+            .frame(width: Self.contentWidth)
+            .padding(.bottom, Self.bottomInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .animation(.easeOut(duration: 0.16), value: content)
         }
-        .frame(width: Self.contentWidth)
-        .padding(.bottom, Self.bottomInset)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .animation(.easeOut(duration: 0.16), value: content)
     }
 
     private func pill(_ content: OverlayContent) -> some View {
@@ -57,17 +89,19 @@ struct StatusOverlayView: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
             .frame(minWidth: 160)
-            .background {
-                let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                ZStack {
-                    // Material for the native blur, then a black wash so white text stays legible
-                    // over a bright app underneath — the pill floats over arbitrary content.
-                    shape.fill(.regularMaterial)
-                    shape.fill(Color.black.opacity(0.30))
-                    shape.strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-                }
-            }
+            .background(pillBackground)
             .shadow(color: .black.opacity(0.32), radius: 14, y: 5)
+    }
+
+    /// Material for the native blur, then a black wash so white text stays legible over a bright
+    /// app underneath — this floats over arbitrary content and can't assume anything about it.
+    private var pillBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+        return ZStack {
+            shape.fill(.regularMaterial)
+            shape.fill(Color.black.opacity(0.30))
+            shape.strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+        }
     }
 
     @ViewBuilder
@@ -96,7 +130,62 @@ struct StatusOverlayView: View {
                     .foregroundStyle(tint(kind))
                 label(text)
             }
+        case .recovery:
+            EmptyView() // never reaches the pill layout — `body` routes it to `recoveryCard`
         }
+    }
+
+    // MARK: Recovery card
+
+    /// Shown when the words had nowhere to go. It stays until the user acts, because the only
+    /// other copy of this text is the history log — and someone who just watched a dictation
+    /// vanish shouldn't have to go looking for it.
+    private func recoveryCard(_ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Self.warningTint)
+                Text("Nowhere to insert this — copy it or discard it")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+            }
+            HStack(spacing: 10) {
+                Button(action: onCopy) { transcriptBox(text) }
+                Button(action: onDiscard) {
+                    Text("Discard")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 96, height: 62)
+                }
+            }
+            .buttonStyle(CardButtonStyle())
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 15)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(pillBackground)
+        .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+    }
+
+    /// The transcription itself, as the copy affordance: the whole box is the button, with a glyph
+    /// saying so. Truncated rather than scrollable — this is a rescue hatch, not a text editor.
+    private func transcriptBox(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(text)
+                .font(.system(size: 12, weight: .regular, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineLimit(3)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Self.liveTint)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(height: 62)
     }
 
     private func label(_ text: String) -> some View {
@@ -122,6 +211,23 @@ struct StatusOverlayView: View {
         case .info: .white.opacity(0.7)
         case .failure: Self.warningTint
         }
+    }
+}
+
+/// The recovery card's buttons: an outlined well that lights up under the pointer and sinks when
+/// pressed. The system button styles bring the light-mode chrome the rest of this HUD avoids.
+private struct CardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return configuration.label
+            .background {
+                ZStack {
+                    shape.fill(Color.white.opacity(configuration.isPressed ? 0.16 : 0.07))
+                    shape.strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
+                }
+            }
+            .contentShape(shape) // the whole well is the target, gaps in the text included
+            .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }
 

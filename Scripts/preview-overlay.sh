@@ -40,6 +40,8 @@ let states: [(String, OverlayContent, [CGFloat])] = [
     ("7-inserted", .notice("Inserted", .success), []),
     ("8-no-speech", .notice("No speech detected", .info), []),
     ("9-error", .notice("Could not open the microphone: no usable input device (it may still be switching — try again)", .failure), []),
+    ("10-recovery", .recovery("Vamos a desplegar el servicio en Kubernetes esta tarde, pero antes hay que revisar los límites de memoria del pod."), []),
+    ("11-recovery-short", .recovery("Hola qué tal."), []),
 ]
 
 // `ImageRenderer` is main-actor-isolated; top-level code runs on the main thread but the compiler
@@ -52,7 +54,7 @@ for (name, content, levels) in states {
                        startPoint: .top, endPoint: .bottom)
         StatusOverlayView(content: content, levels: levels)
     }
-    .frame(width: 560, height: 140)
+    .frame(width: 580, height: 180)
     .environment(\.colorScheme, .dark)
 
     let renderer = ImageRenderer(content: scene)

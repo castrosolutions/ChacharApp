@@ -66,6 +66,10 @@ final class StatusOverlayController: ObservableObject {
     private var modelGraceTask: Task<Void, Never>?
     private var notice: OverlayContent?
     private var noticeTask: Task<Void, Never>?
+    /// Text that had nowhere to be inserted, held until the user copies or discards it. Outranks
+    /// everything else on screen: it is the last chance to rescue words that would otherwise only
+    /// exist in the history log.
+    private var recovery: String?
     private var meterTask: Task<Void, Never>?
     private var smoothedLevel: CGFloat = 0
     private var statusCancellable: AnyCancellable?
@@ -99,9 +103,17 @@ final class StatusOverlayController: ObservableObject {
         switch next {
         case .idle, .listening, .transcribing, .cleaningUp:
             // A new dictation supersedes the previous one's outcome: pressing again while
-            // "Inserted" fades must show the meter immediately.
+            // "Inserted" fades must show the meter immediately. That includes an unrescued
+            // recovery card — dictating again is a deliberate move on, and the text it held is
+            // still in the history log.
             clearNotice()
+            recovery = nil
             phase = next
+            render()
+        case .notInserted(let text):
+            phase = .idle
+            clearNotice()
+            recovery = text
             render()
         case .finished:
             settle(.notice("Inserted", .success), for: .milliseconds(900))
@@ -123,6 +135,28 @@ final class StatusOverlayController: ObservableObject {
     /// Re-evaluate what should be on screen. Needed when something *outside* this controller
     /// changes the answer — the setup guide opening or closing over a model download.
     func refresh() {
+        render()
+    }
+
+    // MARK: Recovery card actions
+
+    /// Put the rescued text on the clipboard so the user can paste it wherever they meant to.
+    ///
+    /// Unlike the dictation path, this leaves it there: no save/restore, and no concealed-type
+    /// marker — the user asked for this text to be in their clipboard, so clipboard managers may
+    /// have it like any other copy.
+    func copyRecovery() {
+        guard let recovery else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(recovery, forType: .string)
+        self.recovery = nil
+        settle(.notice("Copied to the clipboard", .success), for: .milliseconds(1400))
+    }
+
+    /// Throw the rescued text away. It remains in the history log, which is where a change of mind
+    /// gets served.
+    func discardRecovery() {
+        recovery = nil
         render()
     }
 
@@ -148,9 +182,14 @@ final class StatusOverlayController: ObservableObject {
         notice = nil
     }
 
-    /// The single place that decides what is on screen. Priority: a notice (the most recent thing
-    /// that happened) → the live pipeline → the model still loading → nothing.
+    /// The single place that decides what is on screen. Priority: unrescued text → a notice (the
+    /// most recent thing that happened) → the live pipeline → the model still loading → nothing.
+    ///
+    /// The recovery card outranks the master switch too: turning the overlay off is a preference
+    /// about *status*, and swallowing words the user hasn't recovered yet would be a data loss
+    /// dressed up as a setting.
     private func render() {
+        if let recovery { return apply(.recovery(recovery)) }
         guard isEnabled else { return hide() }
         if let notice { return apply(notice) }
         switch phase {
@@ -225,11 +264,17 @@ final class StatusOverlayController: ObservableObject {
 
     /// Put `content` on screen, bringing the panel up if it isn't already.
     private func apply(_ content: OverlayContent) {
+        let wasInteractive = self.content?.isInteractive ?? false
         self.content = content
         if case .listening = content { startMeter() } else { stopMeter() }
-        guard !isShown else { return }
         let panel = ensurePanel()
-        position(panel)
+        // The two layouts need different windows: a big click-through sheet for the pill, a
+        // click-taking window sized to the card. Re-lay-out whenever we cross between them.
+        if !isShown || wasInteractive != content.isInteractive {
+            panel.ignoresMouseEvents = !content.isInteractive
+            position(panel)
+        }
+        guard !isShown else { return }
         panel.orderFrontRegardless() // never `makeKey`: that would steal focus from the paste target
         isShown = true
     }
@@ -246,7 +291,7 @@ final class StatusOverlayController: ObservableObject {
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
         let frame = NSRect(origin: .zero, size: Self.panelSize)
-        let hosting = NSHostingView(rootView: StatusOverlayHost(model: self))
+        let hosting = ClickableHostingView(rootView: StatusOverlayHost(model: self))
         hosting.frame = frame
         hosting.autoresizingMask = [.width, .height]
 
@@ -284,7 +329,16 @@ final class StatusOverlayController: ObservableObject {
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) })
                 ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: visible.midX - Self.panelSize.width / 2, y: visible.minY))
+        let interactive = content?.isInteractive ?? false
+        let size = interactive ? StatusOverlayView.cardPanelSize : Self.panelSize
+        // Both layouts put their visible bottom edge the same distance above the Dock, so the
+        // card appears where the pill was rather than jumping.
+        let y = interactive
+            ? visible.minY + StatusOverlayView.bottomInset - StatusOverlayView.cardMargin
+            : visible.minY
+        panel.setFrame(NSRect(x: visible.midX - size.width / 2, y: y,
+                              width: size.width, height: size.height),
+                       display: true)
     }
 
     // MARK: Level meter
@@ -329,6 +383,23 @@ private struct StatusOverlayHost: View {
     @ObservedObject var model: StatusOverlayController
 
     var body: some View {
-        StatusOverlayView(content: model.content, levels: model.levels)
+        StatusOverlayView(content: model.content,
+                          levels: model.levels,
+                          onCopy: { model.copyRecovery() },
+                          onDiscard: { model.discardRecovery() })
     }
+}
+
+/// A hosting view that acts on the very first click.
+///
+/// AppKit normally spends the first click on an inactive window just to focus it. This panel is
+/// deliberately never key — focus belongs to whatever app the user is typing into — so *every*
+/// click on it is a first click, and without this the recovery card's buttons would need two.
+private final class ClickableHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not loaded from a nib") }
+
+    required init(rootView: Content) { super.init(rootView: rootView) }
 }

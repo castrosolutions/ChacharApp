@@ -189,11 +189,22 @@ public final class DictationController {
                 onPhase(.cleaningUp)
                 if let cleaned = try? await cleaner.clean(output) { output = cleaned; didCleanup = true }
             }
-            let injected = deliver(output)
+            let delivery = deliver(output)
+            // Logged either way: when the paste had nowhere to go, the history log is the second
+            // place the words survive (the overlay's copy button being the first).
             recordHistory(raw: result.text, inserted: output, cleanupApplied: didCleanup,
                           duration: result.duration, historyEnabled: options.historyEnabled)
-            onStatus(String(format: "Ready  (last: %.1fs)", result.duration))
-            onPhase(injected ? .finished : .noSpeech)
+            switch delivery {
+            case .inserted:
+                onStatus(String(format: "Ready  (last: %.1fs)", result.duration))
+                onPhase(.finished)
+            case .empty:
+                onStatus("Ready")
+                onPhase(.noSpeech)
+            case .noTarget(let text):
+                onStatus("Not inserted — nowhere to put it")
+                onPhase(.notInserted(text))
+            }
         } catch {
             onStatus("Transcription error")
             onPhase(.failed("Transcription failed: \(error.localizedDescription)"))
@@ -208,24 +219,38 @@ public final class DictationController {
     /// field can't be inspected (that's why we paste), so this leans on the last-delivery timestamp
     /// and app rather than the character before the cursor.
     ///
-    /// Returns whether anything was actually injected, so the caller can report the right outcome
-    /// phase (a transcription that corrects down to nothing is "no speech", not "finished").
-    @discardableResult
-    private func deliver(_ text: String) -> Bool {
+    /// Returns what became of the text, so the caller can report the matching outcome phase — a
+    /// transcription that corrects down to nothing is "no speech", and one the focused app had no
+    /// room for must not be announced as inserted.
+    private func deliver(_ text: String) -> Delivery {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             onDelivered("(no speech detected)")
-            return false
+            return .empty
         }
         let frontApp = frontmostApp().bundleID
         let payload = continuesPreviousDictation(inApp: frontApp) ? " " + trimmed : trimmed
         chacharLog("inject [\(payload)]")
-        injector.inject(payload)
+        guard injector.inject(payload) == .inserted else {
+            // Deliberately leaves `lastDelivery…` untouched: this text never landed, so the next
+            // dictation must not be joined to it with a separating space.
+            chacharLog("inject FAILED — no focused text target")
+            return .noTarget(trimmed)
+        }
         lastDeliveryDate = Date()
         lastDeliveryApp = frontApp
         contextBrokenSinceDelivery = false // start a fresh run; a Return before the next one ends it
         onDelivered(trimmed)
-        return true
+        return .inserted
+    }
+
+    /// What happened to one dictation's text at the last step.
+    private enum Delivery: Equatable {
+        case inserted
+        /// The corrections left nothing to insert.
+        case empty
+        /// Nowhere to insert it; carries the text so it can be offered to the user instead.
+        case noTarget(String)
     }
 
     /// Note that the user pressed Return/Enter: the current dictation "run" is over, so the next

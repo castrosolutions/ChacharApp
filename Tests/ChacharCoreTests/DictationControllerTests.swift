@@ -103,7 +103,16 @@ final class DictationControllerTests: XCTestCase {
     @MainActor
     private final class SpyInjector: TextInjector {
         var injected: [String] = []
-        func inject(_ text: String) { injected.append(text) }
+        /// What the focused app is pretending to be: somewhere to type, or nowhere.
+        var outcome: InjectionOutcome = .inserted
+
+        @discardableResult
+        func inject(_ text: String) -> InjectionOutcome {
+            // Recorded either way: the controller must still *attempt* the insertion, so a bug
+            // that stopped short of trying would show up here.
+            injected.append(text)
+            return outcome
+        }
     }
 
     /// Collects everything the controller reports back to the app.
@@ -379,6 +388,71 @@ final class DictationControllerTests: XCTestCase {
         harness.controller.cancel()
 
         XCTAssertEqual(harness.recorder.phases, [.listening, .cancelled])
+    }
+
+    // MARK: Nowhere to insert
+    //
+    // A synthetic ⌘V into an app with no focused text field does nothing, silently — so these pin
+    // the behaviour that used to be a lie: the dictation was announced as inserted, the words were
+    // gone, and only the history log still had them.
+
+    /// When the focused app has nowhere to put the text, the run ends at `.notInserted` carrying
+    /// the words — never at `.finished`.
+    @MainActor
+    func testNoTextTargetEndsAtNotInsertedCarryingTheText() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.1]),
+                                  transcribing: "hola mundo")
+        harness.injector.outcome = .noTextTarget
+        await pressAndAwaitStartAttempt(harness)
+
+        let reported = expectation(description: "not-inserted phase reported")
+        harness.controller.onPhase = { [recorder = harness.recorder] phase in
+            recorder.phases.append(phase)
+            if case .notInserted = phase { reported.fulfill() }
+        }
+        harness.controller.release()
+        await fulfillment(of: [reported], timeout: 2)
+
+        XCTAssertEqual(harness.recorder.phases, [.listening, .transcribing, .notInserted("hola mundo")])
+        XCTAssertEqual(harness.injector.injected, ["hola mundo"], "it must still attempt the paste")
+        XCTAssertFalse(harness.recorder.delivered.contains("hola mundo"),
+                       "nothing was delivered, so onDelivered must stay quiet")
+    }
+
+    /// Text that never landed is still logged: the history file is the second place it survives,
+    /// after the overlay's copy button.
+    @MainActor
+    func testNoTextTargetStillRecordsHistory() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.1]),
+                                  transcribing: "rescátame")
+        harness.injector.outcome = .noTextTarget
+        await pressAndAwaitStartAttempt(harness)
+
+        _ = await awaitPhase(.notInserted("rescátame"), in: harness) { harness.controller.release() }
+        XCTAssertEqual(harness.history.load().last?.inserted, "rescátame")
+    }
+
+    /// The separating-space logic must not count a failed insertion as a delivery. Otherwise the
+    /// next dictation into that app would open with a stray leading space, continuing text that
+    /// was never there.
+    @MainActor
+    func testFailedInsertionDoesNotStartAContinuationRun() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [0.1]),
+                                  transcribing: "primera")
+        harness.injector.outcome = .noTextTarget
+        await pressAndAwaitStartAttempt(harness)
+        _ = await awaitPhase(.notInserted("primera"), in: harness) { harness.controller.release() }
+
+        // Same app, moments later — but the first dictation never landed, so this one starts clean.
+        harness.injector.outcome = .inserted
+        await pressAndAwaitStartAttempt(harness)
+        _ = await awaitPhase(.finished, in: harness) { harness.controller.release() }
+
+        XCTAssertEqual(harness.injector.injected, ["primera", "primera"],
+                       "the second insertion must not be prefixed with a continuation space")
     }
 
     /// A transcription failure must end the run: `.failed` clears the spinner and names the cause.
