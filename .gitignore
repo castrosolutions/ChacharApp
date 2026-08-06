@@ -41,6 +41,7 @@ Scripts/release.sh
 Scripts/upload-r2.sh
 Scripts/update-cask.sh
 Scripts/analytics.py
+Scripts/.geo/
 Scripts/snapshot-metrics.py
 Scripts/snapshot-metrics.sh
 Scripts/__pycache__/
