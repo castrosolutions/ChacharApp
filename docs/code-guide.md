@@ -755,11 +755,39 @@ flips the app from *accessory* to *regular* while the window is open, so ⌘C/�
 The same state split powers the **first-run setup guide** in
 `Sources/ChacharApp/Onboarding/`: `OnboardingController` owns the window and polls the
 two TCC grants (they have no change-notification API) once per second while it's visible,
-publishing them as `@Published` state; `OnboardingView` renders a live checklist —
-Microphone, Accessibility, and the one-time speech-model download (observed through
-`RuntimeStatus`, which the model download reports progress into). `AppDelegate` opens the
+publishing them as `@Published` state; `OnboardingView` renders it. `AppDelegate` opens the
 guide on launch whenever setup is incomplete (first run, a revoked permission, a deleted
 model); the status menu's "Setup Guide…" reopens it on demand.
+
+The guide is a four-step wizard (`SetupStep`), not one long checklist:
+
+| Step | What it does |
+|---|---|
+| `.permissions` | Microphone, Accessibility and the one-time model download, as live rows. The only step that gates `Continue`. |
+| `.language` | Which language will be spoken. The app ships tuned for Spanish, which is a *default*, not a decision — asking once is the difference between "works out of the box" and "transcribes my English as Spanish". |
+| `.mode` | Push-to-talk vs. hands-free (`pttToggleMode`). |
+| `.practice` | A scratchpad, a keyboard diagram pointing at the trigger key, and a coach line — the user dictates one line before finishing. |
+
+The practice step is the reason for the wizard. Everything before it is invisible
+plumbing: someone who has granted two permissions and waited for a 626 MB download still
+has no idea what the gesture feels like, and the first real attempt otherwise happens in a
+document that matters. Here it happens in a notepad that doesn't.
+
+Nothing in it is simulated. `AppDelegate` forwards the same `onPhase` stream the overlay
+listens to into `OnboardingController.notePhase`, which maps it onto a `PracticeState`
+(`waiting → listening → working → done`, or `failed` with a reason to try again); the
+controller ignores phases unless that step is on screen. So the practice run uses the real
+mic, the real model and the real clipboard paste — the scratchpad is simply whatever holds
+keyboard focus, which is why `OnboardingView` puts the caret there with `@FocusState` on
+appear. `.finished` (text actually inserted) is what unlocks "Start Dictating"; after two
+failed attempts the gate opens anyway, because a broken mic or a noisy room must not trap
+anyone in the setup window.
+
+Two shared bits of chrome support it: `Keycap` (`Sources/ChacharApp/Keycap.swift`) draws a
+single key as a key, and `KeyboardDiagram` arranges a row of them around the trigger. The
+row follows the configured trigger — bottom row for right-hand modifiers, its own row for
+Right ⇧, the function row for F6–F8 — because the guide must never point at a key that
+wouldn't do anything.
 
 How a live change flows:
 
@@ -983,7 +1011,9 @@ shared Hugging Face cache, so a fresh install ships no LLM and dictation works w
 | Add a settings option | `AppSettings.swift` → `SettingsView.swift` → handle in `AppDelegate.applySettings` |
 | Change a default model / the sample rate | `ChacharCore/Defaults.swift` / `AudioSamples.whisperSampleRate` |
 | Support a new/downloadable model | `ModelCatalog.swift` + `ASRModelController.swift` |
-| Change the floating indicator's look | `Overlay/StatusOverlayView.swift` (pill, level meter) |
+| Change the floating indicator's look | `Overlay/StatusOverlayView.swift` (pill, level meter, the ESC hint) |
+| Change a setup-guide step | `Onboarding/OnboardingView.swift` + `SetupStep` in `OnboardingController.swift` |
+| Change what the practice step accepts | `OnboardingController.notePhase` (phase → `PracticeState`) |
 | Change *when* the indicator appears | `Overlay/StatusOverlayController.swift` (`render`) + `DictationPhase` |
 | Change how text is inserted | `TextInjector.swift` (`PasteboardInjector`) |
 | Tune when insertion is judged impossible | `FocusedTextTarget.swift` (`probe`, the roles set) |
@@ -1018,9 +1048,11 @@ Sources/
 │   ├── Overlay/                    floating status pill (Ch. 8b)
 │   │   ├── StatusOverlayController.swift owns the panel + the state machine
 │   │   └── StatusOverlayView.swift       SwiftUI pill (level meter / spinner / progress)
+│   ├── Keycap.swift                one key drawn as a key (HUD hint + diagram)
 │   ├── Onboarding/                 first-run setup guide (Ch. 8)
-│   │   ├── OnboardingController.swift  owns the window; polls the TCC grants
-│   │   └── OnboardingView.swift        SwiftUI checklist (permissions + model download)
+│   │   ├── OnboardingController.swift  owns the window; polls the TCC grants; practice state
+│   │   ├── OnboardingView.swift        SwiftUI wizard (permissions → language → mode → practice)
+│   │   └── KeyboardDiagram.swift       stylised key row pointing at the PTT key
 │   └── Settings/                   the Settings subsystem (Ch. 8)
 │       ├── AppSettings.swift       user choices (Codable)
 │       ├── SettingsStore.swift     source of truth + persistence + Combine

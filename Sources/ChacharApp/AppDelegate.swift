@@ -323,7 +323,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         controller.isCleanupReady = { [weak self] in self?.cleanupState == .ready }
         controller.onStatus = { [weak self] in self?.setStatus($0) }
-        controller.onPhase = { [weak self] in self?.overlay.setPhase($0) }
+        // Both the overlay and the setup guide follow the pipeline: the guide's practice step is a
+        // real dictation, so it reads the same phases rather than simulating any of them (it
+        // ignores them unless that step is on screen).
+        controller.onPhase = { [weak self] phase in
+            self?.overlay.setPhase(phase)
+            self?.onboarding.notePhase(phase)
+        }
         // Not shown on screen: the overlay reports *that* a dictation landed, never its text (an
         // earlier HUD previewed the transcription and covered what you were writing).
         controller.onDelivered = { chacharLog("delivered [\($0)]") }

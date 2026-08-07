@@ -77,6 +77,7 @@ SWIFT
 
 swiftc -swift-version 5 -O \
     "$ROOT/Sources/ChacharApp/Overlay/StatusOverlayView.swift" \
+    "$ROOT/Sources/ChacharApp/Keycap.swift" \
     "$WORK/main.swift" \
     -o "$WORK/preview"
 

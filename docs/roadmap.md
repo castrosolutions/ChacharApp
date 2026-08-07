@@ -165,7 +165,11 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       an unfocused window used to be announced as "Inserted" while the words went nowhere —
       `FocusedTextTarget` now probes the focused element first (refusing only for roles it
       positively recognises as untypeable, so an unfamiliar toolkit can never cost a paste that
-      works today) and the overlay holds the text on screen with **Copy / Discard** until you act.
+      works today) and the overlay holds the text on screen with **Copy / Discard** until you act;
+      1.6.0 put the setup guide to work (below) and made the cancel gesture discoverable — ESC has
+      cancelled a recording since 1.4.0, but nothing ever said so, and a feature nobody can find is
+      a feature nobody has, so the listening pill now carries a quiet **`esc` to cancel** hint for
+      exactly as long as the key does something.
       Published at
       **github.com/castrosolutions/ChacharApp** with the `.dmg` attached as a GitHub release,
       mirroring R2 (ADR 0002 D3). Remaining: validate the first-download path from a fresh macOS
@@ -174,10 +178,17 @@ acoustic — so the lever is biasing, not voice fine-tuning.
 - [x] **First-run onboarding**: a **setup guide window** (`Sources/ChacharApp/Onboarding/`) walks
       through Mic + Accessibility with live checkmarks (TCC is polled — a grant flips its row green
       within a second, no relaunch) and shows the one-time speech-model download with a progress
-      bar; "Start Dictating" unlocks when all three are green. It auto-opens on launch whenever
-      setup is incomplete (first run, revoked permission, deleted model) and can be reopened from
-      the status menu ("Setup Guide…"). The hotkey **arms live** when Accessibility is granted —
-      `AppDelegate` polls `AXIsProcessTrusted()` and starts the `CGEventTap` on grant.
+      bar. It auto-opens on launch whenever setup is incomplete (first run, revoked permission,
+      deleted model) and can be reopened from the status menu ("Setup Guide…"). The hotkey **arms
+      live** when Accessibility is granted — `AppDelegate` polls `AXIsProcessTrusted()` and starts
+      the `CGEventTap` on grant. 1.6.0 turned it into a **four-step wizard** that also asks the two
+      questions the app had been answering for the user, and then makes them use it: **language**
+      (Spanish was a default masquerading as a decision — anyone dictating in English got Spanish
+      transcriptions until they found Settings) and **push-to-talk vs hands-free**, followed by a
+      **practice step** — a scratchpad, a stylised keyboard diagram pointing at the trigger key,
+      and a coach line. The practice run is a real dictation (same mic, model and paste; the guide
+      reads the pipeline's `onPhase` stream), and "Start Dictating" unlocks only once text has
+      actually landed — or after two failed attempts, so a broken mic can't trap anyone.
 - [x] **Homebrew distribution**: the `chacharapp` cask in the public tap
       **`castrosolutions/homebrew-tap`** fronts the notarized R2 `.dmg` —
       `brew install --cask castrosolutions/tap/chacharapp`. Passes `brew style` and

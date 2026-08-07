@@ -111,6 +111,7 @@ struct StatusOverlayView: View {
             HStack(spacing: 14) {
                 LevelMeter(levels: levels, tint: Self.liveTint)
                 label("Listening…")
+                cancelHint
             }
         case .working(let text):
             HStack(spacing: 12) {
@@ -133,6 +134,27 @@ struct StatusOverlayView: View {
         case .recovery:
             EmptyView() // never reaches the pill layout — `body` routes it to `recoveryCard`
         }
+    }
+
+    /// The way out of a recording, shown where the recording is announced.
+    ///
+    /// ESC has always cancelled a dictation, but nothing ever said so — a feature nobody can
+    /// discover is a feature nobody has. It rides only on ``OverlayContent/listening`` because that
+    /// is the one moment the key does anything, and it is deliberately quiet (smaller, dimmer, past
+    /// a hairline rule) so the meter and "Listening…" still read first.
+    private var cancelHint: some View {
+        HStack(spacing: 7) {
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(width: 1, height: 18)
+                .padding(.trailing, 3)
+            Keycap("esc", style: .hud)
+            Text("to cancel")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+        }
+        .fixedSize() // never let the hint wrap or squeeze — it shrinks the meter instead
     }
 
     // MARK: Recovery card
