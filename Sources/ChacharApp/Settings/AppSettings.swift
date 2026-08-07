@@ -53,6 +53,13 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// guide still auto-opens on launch if a requirement is missing again (a revoked permission, a
     /// deleted model) regardless of this flag.
     var onboardingCompleted: Bool = false
+    /// Reveal the **Developer** settings tab, which holds the Models and Cleanup panes.
+    ///
+    /// Off by default: swapping the speech model and running a second local LLM over your text are
+    /// experiments, not settings, and putting them in everyone's tab strip implies the app needs
+    /// tuning before it works. It doesn't. Hiding the panes never disables what they configure —
+    /// a cleanup model already enabled keeps running.
+    var developerToolsEnabled: Bool = false
 
     init() {}
 
@@ -80,6 +87,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         defaultASRModelPath = try container.decodeIfPresent(String.self, forKey: .defaultASRModelPath) ?? defaults.defaultASRModelPath
         installedASRModels = try container.decodeIfPresent([InstalledASRModel].self, forKey: .installedASRModels) ?? defaults.installedASRModels
         onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? defaults.onboardingCompleted
+        developerToolsEnabled = try container.decodeIfPresent(Bool.self, forKey: .developerToolsEnabled) ?? defaults.developerToolsEnabled
     }
 }
 
@@ -107,6 +115,10 @@ struct PTTOption: Identifiable, Hashable {
         .init(id: "ropt", label: "Right ⌥ Option", trigger: .modifier(KeyCode.rightOption)),
         .init(id: "rctrl", label: "Right ⌃ Control", trigger: .modifier(KeyCode.rightControl)),
         .init(id: "rshift", label: "Right ⇧ Shift", trigger: .modifier(KeyCode.rightShift)),
+        // A two-key chord, which is what makes the left-hand modifiers usable at all: Left ⌘ alone
+        // is the base of half the shortcuts on the machine, but ⇧⌘ held on its own does nothing.
+        .init(id: "lshift-lcmd", label: "⇧ + Left ⌘ — hold both, one-handed",
+              trigger: .combo([KeyCode.leftShift, KeyCode.leftCommand])),
     ]
 }
 

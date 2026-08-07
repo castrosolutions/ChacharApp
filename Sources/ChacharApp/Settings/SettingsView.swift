@@ -14,12 +14,18 @@ struct SettingsView: View {
     @State private var selection: Tab = .general
 
     private enum Tab: String, CaseIterable, Identifiable {
-        // Ordered by how often they're used: History and Vocabulary are day-to-day, Models and
-        // Cleanup are set-once, Updates/Feedback/About are rare.
+        // Ordered by how often they're used: History and Vocabulary are day-to-day,
+        // Updates/Feedback/About are rare, and Developer is opt-in (see `visibleTabs`).
         case general = "General", history = "History", vocabulary = "Vocabulary"
-        case models = "Models", cleanup = "Cleanup"
-        case updates = "Updates", feedback = "Feedback", about = "About"
+        case updates = "Updates", feedback = "Feedback"
+        case developer = "Developer", about = "About"
         var id: Self { self }
+    }
+
+    /// Developer is the one tab that comes and goes, so the strip is built from this rather than
+    /// from `allCases`.
+    private var visibleTabs: [Tab] {
+        Tab.allCases.filter { $0 != .developer || store.settings.developerToolsEnabled }
     }
 
     var body: some View {
@@ -27,7 +33,7 @@ struct SettingsView: View {
             // A self-contained segmented control instead of TabView's system tab bar, so the chip
             // strip has intentional margins and its rounded background isn't clipped at the edges.
             Picker("Section", selection: $selection) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(visibleTabs) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -40,6 +46,11 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(width: 580, height: 520)
+        // Turning the toggle off while standing on the Developer tab would leave the window showing
+        // a pane no chip is selecting. Step back to General instead.
+        .onChange(of: store.settings.developerToolsEnabled) { _, enabled in
+            if !enabled, selection == .developer { selection = .general }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -47,11 +58,49 @@ struct SettingsView: View {
         case .general: GeneralSettingsView(store: store)
         case .history: HistorySettingsView(store: store, history: history)
         case .vocabulary: VocabularySettingsView(model: vocabulary)
-        case .models: ModelsSettingsView(store: store, status: status, asr: asr)
-        case .cleanup: CleanupSettingsView(store: store, status: status)
         case .updates: UpdatesSettingsView(updates: updates)
         case .feedback: FeedbackSettingsView(store: store, asr: asr)
+        case .developer: DeveloperSettingsView(store: store, status: status, asr: asr)
         case .about: AboutSettingsView()
+        }
+    }
+}
+
+// MARK: - Developer
+
+/// Holds the two panes that used to sit in everyone's tab strip: **Models** (swap the speech
+/// model) and **Cleanup** (the optional second local LLM that rewrites your text).
+///
+/// They are nested one level down rather than hidden outright because they aren't dangerous, just
+/// specialised — someone who turns the toggle on is looking for exactly these. Their own chip
+/// strip lives inside this pane, so it is on screen only while Developer is the open tab.
+private struct DeveloperSettingsView: View {
+    @ObservedObject var store: SettingsStore
+    @ObservedObject var status: RuntimeStatus
+    @ObservedObject var asr: ASRModelController
+
+    @State private var pane: Pane = .models
+
+    private enum Pane: String, CaseIterable, Identifiable {
+        case models = "Models", cleanup = "Cleanup"
+        var id: Self { self }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Pane", selection: $pane) {
+                ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            switch pane {
+            case .models: ModelsSettingsView(store: store, status: status, asr: asr)
+            case .cleanup: CleanupSettingsView(store: store, status: status)
+            }
         }
     }
 }
@@ -120,6 +169,18 @@ private struct GeneralSettingsView: View {
                 Text("Whisper sometimes invents a stray “gracias”/“thank you” at the end of quiet "
                      + "audio. This drops it when it stands alone at the end. Turn off if you often "
                      + "finish a dictation with a real standalone “gracias”.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Show developer tools", isOn: $store.settings.developerToolsEnabled)
+            } header: {
+                Text("Advanced")
+            } footer: {
+                Text("Adds a Developer tab holding Models (swap the speech model) and Cleanup (an "
+                     + "optional second local model that rewrites your text). Both are experiments "
+                     + "rather than settings — dictation is fully set up without them. Turning this "
+                     + "off only hides the tab; anything already enabled there keeps running.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

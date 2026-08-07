@@ -169,7 +169,14 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       1.6.0 put the setup guide to work (below) and made the cancel gesture discoverable — ESC has
       cancelled a recording since 1.4.0, but nothing ever said so, and a feature nobody can find is
       a feature nobody has, so the listening pill now carries a quiet **`esc` to cancel** hint for
-      exactly as long as the key does something.
+      exactly as long as the key does something. 1.6.0 also added a **chord trigger** (`⇧ + Left ⌘`)
+      — the left-hand modifiers were unusable alone, being the base of every shortcut on the
+      machine, but ⇧⌘ held by itself does nothing until a letter joins it, so `HotkeyMonitor` drops
+      the session and passes the key through if one arrives while the chord is still down — and
+      moved **Models** and **Cleanup** out of everyone's settings strip into an opt-in **Developer**
+      tab (General → Advanced): swapping the speech model and running a second local LLM over your
+      text are experiments, not settings, and their presence implied the app needed tuning before it
+      worked. Hiding them never disables them — an enabled cleanup model keeps running.
       Published at
       **github.com/castrosolutions/ChacharApp** with the `.dmg` attached as a GitHub release,
       mirroring R2 (ADR 0002 D3). Remaining: validate the first-download path from a fresh macOS

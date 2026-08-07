@@ -13,6 +13,14 @@ enum PushToTalkTrigger: Equatable, Hashable, Codable {
     /// A modifier key identified by keycode (e.g. Right Command = 54, Right Option = 61).
     /// Detected via flagsChanged and passed through (swallowing it would corrupt modifier state).
     case modifier(CGKeyCode)
+    /// Several modifiers that must be held *together* (e.g. Left ⇧ + Left ⌘). The session runs for
+    /// as long as every one of them is physically down.
+    ///
+    /// This is what makes the left-hand modifiers usable: Left ⌘ alone is the base of half the
+    /// shortcuts on the machine, but ⇧⌘ held on its own does nothing in macOS — a chord is only a
+    /// shortcut once a letter joins it. Read from `event.flags` like the single-modifier case, so
+    /// it is self-healing if the OS drops an event.
+    case combo(Set<CGKeyCode>)
 }
 
 /// Global push-to-talk hotkey via a `CGEventTap`, supporting several triggers at once so the
@@ -44,6 +52,11 @@ final class HotkeyMonitor {
     private var activeTrigger: PushToTalkTrigger?
     /// Physical down-state of modifier keys, to turn toggling flagsChanged events into press/release.
     private var modifiersDown: Set<CGKeyCode> = []
+    /// Which combo triggers were fully held as of the last `flagsChanged`, so a combo acts on the
+    /// *edge* (became complete / stopped being complete) rather than on every event. Without this,
+    /// pressing a third modifier while holding ⇧⌘ would re-fire the combo — which in hands-free
+    /// mode would silently end the session.
+    private var combosHeld: Set<PushToTalkTrigger> = []
 
     init(triggers: [PushToTalkTrigger], toggleMode: Bool = false,
          onPress: @escaping () -> Void, onRelease: @escaping () -> Void,
@@ -120,6 +133,16 @@ final class HotkeyMonitor {
                 cancelActiveSession()
                 return nil
             }
+            // A chord trigger doubles as the prefix of real shortcuts (⇧⌘4, ⇧⌘S…). If a normal key
+            // arrives while the chord is still physically held, the user is typing a shortcut, not
+            // dictating: drop the session and let the key through, so the shortcut works and no
+            // silent utterance is transcribed. Only while the keys are *still down*, which is what
+            // separates this from hands-free — there the chord is long released and typing during a
+            // session must not cancel it.
+            if let active = activeTrigger, case .combo = active, combosHeld.contains(active) {
+                cancelActiveSession()
+                return Unmanaged.passUnretained(event)
+            }
             // Return/Enter ends a dictation "run": a newline or a submitted prompt (e.g. Claude Code
             // in the terminal) is not a continuation, so the next dictation must not inherit a
             // leading space. Notify and pass the key through untouched (the app still needs it).
@@ -167,10 +190,31 @@ final class HotkeyMonitor {
                 }
                 // Pass modifiers through (don't swallow).
             }
+            // Combos read the whole modifier state off this same event, so they're evaluated on
+            // every flagsChanged rather than only when one of their own keys moved.
+            evaluateCombos(event)
         default:
             break
         }
         return Unmanaged.passUnretained(event)
+    }
+
+    /// Start or end any combo trigger whose keys just became (or stopped being) fully held.
+    private func evaluateCombos(_ event: CGEvent) {
+        for trigger in triggers {
+            guard case .combo(let codes) = trigger, !codes.isEmpty else { continue }
+            let isHeld = codes.allSatisfy { code in
+                guard let bit = Self.deviceFlag(forModifier: code) else { return false }
+                return event.flags.contains(bit)
+            }
+            guard isHeld != combosHeld.contains(trigger) else { continue } // no edge, nothing to do
+            if isHeld { combosHeld.insert(trigger) } else { combosHeld.remove(trigger) }
+            if toggleMode {
+                if isHeld { toggleTrigger(trigger) } // toggle on completion only
+            } else {
+                if isHeld { beginTrigger(trigger) } else { endTrigger(trigger) }
+            }
+        }
     }
 
     /// Hands-free press: start a session if idle, or end it if this same trigger owns it. The

@@ -18,6 +18,11 @@ public enum KeyCode {
     public static let rightOption: CGKeyCode = 61
     public static let rightControl: CGKeyCode = 62
 
+    // Left-hand modifiers. Useless as *single* push-to-talk triggers (they are the ones every app
+    // shortcut is built on), but fine in a two-key combo, which no shortcut can be.
+    public static let leftShift: CGKeyCode = 56
+    public static let leftCommand: CGKeyCode = 55
+
     // Letters.
     public static let ansiV: CGKeyCode = 9 // kVK_ANSI_V — synthesized for the paste (⌘V) injector
 

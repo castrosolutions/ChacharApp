@@ -455,6 +455,14 @@ concept to grasp is **`PushToTalkTrigger`**, a small enum:
   doesn't also do its normal job.
 - `.modifier(code)` — a modifier like Right ⌘. Detected via "flags changed" and **passed
   through** (swallowing a modifier would corrupt keyboard state).
+- `.combo(codes)` — several modifiers held together, e.g. Left ⇧ + Left ⌘. This is what
+  makes the *left*-hand modifiers usable at all: Left ⌘ on its own is the base of half the
+  shortcuts on the machine, but ⇧⌘ held alone does nothing — a chord only becomes a
+  shortcut once a letter joins it. Which is also its one hazard, handled in
+  `HotkeyMonitor`: if a normal key arrives while the chord is *still physically down*, the
+  user is typing ⇧⌘S, not dictating, so the session is dropped and the key passed through.
+  The "still down" test is what keeps this from firing in hands-free mode, where the chord
+  was released long before any typing.
 
 Key codes are named in the `KeyCode` type (`ChacharCore/KeyCode.swift`), so triggers read
 as `.key(KeyCode.f7)` rather than `.key(98)`. Supporting several triggers at once lets
@@ -747,10 +755,22 @@ quietly take their default. One subtlety inside: `asrLanguage` is *itself* optio
 (`nil` means auto-detect), so the code distinguishes "key absent → use the default" from
 "key present with value `null` → the user chose auto-detect".
 
-Around those sit `ASRModelController` (Models-tab logic), `ModelCatalog` (the model spec
+Around those sit `ASRModelController` (Models-pane logic), `ModelCatalog` (the model spec
 table, entries of type `ModelDescriptor`), the two view-models (`HistoryViewModel`,
 `VocabularyViewModel`), the SwiftUI `SettingsView`, and `SettingsWindowController` (which
 flips the app from *accessory* to *regular* while the window is open, so ⌘C/⌘V work).
+
+`SettingsView`'s tab strip is built from `visibleTabs`, not from `Tab.allCases`, because
+one tab comes and goes. **Models** (swap the speech model) and **Cleanup** (the optional
+second local LLM that rewrites your text) are experiments rather than settings: putting
+them in everyone's strip implies the app needs tuning before it works, which it doesn't.
+So they moved one level down, into a **Developer** tab that appears only when
+`developerToolsEnabled` is on (General → Advanced), with their own chip strip *inside*
+that pane — so those child chips are on screen only while Developer is the open tab.
+Hiding them never disables what they configure: a cleanup model already enabled keeps
+running, which is why the toggle only controls visibility. `onChange` steps the selection
+back to General if the toggle goes off while Developer is the open tab, so the window can
+never show a pane no chip is selecting.
 
 The same state split powers the **first-run setup guide** in
 `Sources/ChacharApp/Onboarding/`: `OnboardingController` owns the window and polls the
@@ -1001,7 +1021,8 @@ shared Hugging Face cache, so a fresh install ships no LLM and dictation works w
 
 | I want to… | Start in… |
 |------------|-----------|
-| Add/rename a push-to-talk key | `KeyCode.swift` + `AppSettings.swift` (`PTTOption.catalog`) + `HotkeyMonitor.swift` |
+| Add/rename a push-to-talk key or chord | `KeyCode.swift` + `AppSettings.swift` (`PTTOption.catalog`) + `HotkeyMonitor.swift` |
+| Add/hide a settings tab | `SettingsView.swift` (`Tab`, `visibleTabs`, `content`) |
 | Change what happens on press/release | `DictationController.press` / `release` / `runPipeline` |
 | Add a correction rule type | `Correction/` (new `Corrector`), wire it in `DictationController.runPipeline` |
 | Tune the fuzzy matcher | `FuzzyGlossaryCorrector.swift` (its init parameters) |
