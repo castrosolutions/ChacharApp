@@ -117,14 +117,27 @@ private struct GeneralSettingsView: View {
                     Toggle(option.label, isOn: triggerBinding(option))
                         .disabled(isOnlyEnabled(option.trigger))
                 }
-                Toggle("Hands-free (press to start, press again to stop)",
-                       isOn: $store.settings.pttToggleMode)
             } header: {
                 Text("Push-to-talk")
             } footer: {
-                Text("By default, hold a key to dictate and release to insert. Hands-free mode "
-                     + "instead toggles recording with a press, then a second press to stop. "
-                     + "At least one key must stay enabled.")
+                Text("Hold one of these to dictate, release to insert. Enable as many as you like — "
+                     + "the same gesture then works across keyboards, e.g. F7 on the built-in one "
+                     + "and Right ⌘ on an external one whose function row its own software "
+                     + "intercepts. At least one key must stay enabled.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            // Its own section, not a row under Push-to-talk: this doesn't pick a key, it changes
+            // what the key you picked *does*, and every trigger above obeys it.
+            Section {
+                Toggle("Start and stop with a press", isOn: $store.settings.pttToggleMode)
+            } header: {
+                Text("Hands-free")
+            } footer: {
+                Text("Instead of holding the key down, press once to start recording and press "
+                     + "again to stop. Easier on long dictations, where holding a key for a minute "
+                     + "gets tiring. Either way, ESC cancels a recording in progress and throws the "
+                     + "audio away.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
