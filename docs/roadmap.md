@@ -121,7 +121,7 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       end-to-end (first 0.0.1 build notarized). `Scripts/upload-r2.sh` publishes it. *(These
       maintainer scripts are kept local, not in the public repo — see `.gitignore`.)*
 - [ ] **Publish the first release**: the notarized **1.4.1 `.dmg` is live on R2** at
-      `https://dl.juanpablocastro.com/releases/1.5.0/ChacharApp-1.5.0.dmg`. First-run fixes found
+      `https://dl.juanpablocastro.com/releases/1.6.0/ChacharApp-1.6.0.dmg`. First-run fixes found
       by clean-install testing: 1.1.0 added the setup guide; 1.1.1 the missing microphone
       entitlement (a hardened-runtime app without `com.apple.security.device.audio-input` is
       denied the mic silently — no prompt, no row in System Settings); 1.1.2 made the mic-grant
