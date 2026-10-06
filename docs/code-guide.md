@@ -860,7 +860,7 @@ Five decisions in here are worth knowing before you touch it:
   text and was switched off because it covered what you were writing. Keeping dictated
   text out is exactly what lets this one stay small enough to leave on.
 - **The panel must never take focus.** It's a `.nonactivatingPanel`, never made key, and
-  `ignoresMouseEvents`. The whole app depends on the frontmost app *staying* frontmost —
+  click-through by default (`ignoresMouseEvents`). The whole app depends on the frontmost app *staying* frontmost —
   that's where the ⌘V lands (Chapter 7, station 5). It also joins all Spaces and sits at
   `.statusBar` level so it survives full-screen apps.
 - **One `render()`, one priority order.** Every input funnels through a single method that
@@ -896,6 +896,47 @@ history log. So it:
 
 Copy leaves the text on the clipboard for good: no save/restore, and no concealed-type
 marker. The user asked for it to be there.
+
+The listening pill has one control of its own: a **microphone chip** under the meter that
+names the device being recorded from (`MicrophoneCapture.currentInput`, followed on the
+meter tick because the engine opens its device a beat after the key goes down) and pops a
+`MicrophoneMenu` when clicked. macOS switches its default input on its own — AirPods
+connecting is the classic — and nothing in the recording used to say so. Picking a device
+*pins* it for ChacharApp only (`AppSettings.preferredMicrophone`, by Core Audio UID; the
+system default is left alone): `MicrophoneCapture` binds the input node's I/O unit to it on
+every engine build, and falls back to the system default while it is unplugged. A switch
+mid-recording restarts the engine but not the utterance, so the words either side of it
+land in the same dictation. The Settings picker writes the same field.
+
+A pinned mic is **not** recorded through `AVAudioEngine`. Forcing a non-default device
+into the engine (setting its I/O unit's current device) was tried and abandoned: with
+AirPods as the default input (call mode, 24 kHz) and a 48 kHz USB mic pinned, the input
+node kept reporting the old format — a tap with it received no buffers at all — the engine
+then posted configuration changes about its own setup, and once AVFAudio's internal I/O
+queue spun in a property listener, hanging the main thread that had asked it for a
+format. So `MicrophoneCapture` has two paths: the engine, untouched, when following the
+system default; and an `AVCaptureSession` on the pinned `AVCaptureDevice` (its
+`uniqueID` is the Core Audio UID) whose audio output is asked for 16 kHz mono Float32
+outright — no converter. If that device is unplugged (`wasDisconnectedNotification`) or
+absent at start, capture falls back to the engine on the system default. Both paths feed
+the same `collect(_:)`.
+
+Two more Core Audio surprises shape this code. Following the system default, `AVAudioEngine`
+records through a **private aggregate** it builds itself (`CADefaultDeviceAggregate-<pid>-<n>`),
+which is not hidden: it would list as a mic and the I/O unit names it as the current device,
+so `AudioInputDevices` filters private aggregates and the chip names the default input
+instead. And a mic can be connected yet **dead** — Apple silicon cuts the built-in mic in
+hardware when the lid is closed, and a Continuity iPhone mic stays silent until the phone
+wakes — delivering buffers of exact zeros. A live mic always carries a noise floor, so
+`MicrophoneCapture` flags an utterance with no non-zero sample: the chip turns amber
+("no sound — switch mic") after 0.6 s, and `DictationController` reports a dead mic on
+release instead of transcribing silence into "no speech".
+
+Taking that click without giving up the big click-through sheet is done by the pointer,
+not the geometry: the view reports the pill's frame, and on each meter tick the controller
+flips `ignoresMouseEvents` off only while the pointer is over the pill
+(`trackPointer()`). The menu closes itself the moment the recording ends — the paste is
+coming, and an open menu would be tracking the keyboard when ⌘V lands.
 
 The level meter is the one part that reaches back into the audio path.
 `MicrophoneCapture` computes an RMS level for each converted buffer (`AudioLevelMeter`,
@@ -1032,7 +1073,8 @@ shared Hugging Face cache, so a fresh install ships no LLM and dictation works w
 | Add a settings option | `AppSettings.swift` → `SettingsView.swift` → handle in `AppDelegate.applySettings` |
 | Change a default model / the sample rate | `ChacharCore/Defaults.swift` / `AudioSamples.whisperSampleRate` |
 | Support a new/downloadable model | `ModelCatalog.swift` + `ASRModelController.swift` |
-| Change the floating indicator's look | `Overlay/StatusOverlayView.swift` (pill, level meter, the ESC hint) |
+| Change the floating indicator's look | `Overlay/StatusOverlayView.swift` (pill, level meter, the ESC hint, the mic chip) |
+| Change how the microphone is chosen | `MicrophoneMenu.swift` + `Audio/AudioInputDevice.swift` + `MicrophoneCapture.setPreferredInput` |
 | Change a setup-guide step | `Onboarding/OnboardingView.swift` + `SetupStep` in `OnboardingController.swift` |
 | Change what the practice step accepts | `OnboardingController.notePhase` (phase → `PracticeState`) |
 | Change *when* the indicator appears | `Overlay/StatusOverlayController.swift` (`render`) + `DictationPhase` |

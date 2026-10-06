@@ -109,6 +109,9 @@ private struct DeveloperSettingsView: View {
 
 private struct GeneralSettingsView: View {
     @ObservedObject var store: SettingsStore
+    /// Input devices as of when the tab appeared (Core Audio is asked again on each appearance).
+    @State private var microphones: [AudioInputDevice] = []
+    @State private var systemDefaultMicrophone: AudioInputDevice?
 
     var body: some View {
         Form {
@@ -142,15 +145,31 @@ private struct GeneralSettingsView: View {
             }
 
             Section {
+                Picker("Dictate with", selection: microphoneSelection) {
+                    Text(systemDefaultMicrophone.map { "System default (\($0.name))" } ?? "System default")
+                        .tag(String?.none)
+                    ForEach(microphoneChoices) { device in
+                        Text(microphones.contains(device) ? device.name : "\(device.name) (not connected)")
+                            .tag(Optional(device.uid))
+                    }
+                }
+                Text("Pick a microphone to stop dictation following macOS when it switches inputs on "
+                     + "its own — AirPods connecting, say. If the chosen one is unplugged, the system "
+                     + "default stands in until it's back. You can also switch from the indicator "
+                     + "while recording.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Open microphone only while dictating", isOn: $store.settings.micOnlyWhileDictating)
-            } header: {
-                Text("Microphone")
-            } footer: {
                 Text("On: the mic opens while you hold the key and closes on release, so macOS shows "
                      + "its orange “mic in use” indicator only while you dictate — but the first press "
                      + "pays a small warm-up. Off: the mic stays warm for the fastest response (the "
                      + "indicator stays on).")
                     .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("Microphone")
+            }
+            .onAppear {
+                microphones = AudioInputDevices.all()
+                systemDefaultMicrophone = AudioInputDevices.systemDefault()
             }
 
             Section {
@@ -159,10 +178,9 @@ private struct GeneralSettingsView: View {
                 Text("On-screen feedback")
             } footer: {
                 Text("A small pill near the bottom of the screen shows a live microphone level "
-                     + "while you dictate, a spinner while your words are being transcribed, and "
-                     + "the speech model's progress while it loads at launch. It never takes "
-                     + "focus and can't be clicked — turn it off to rely on the menu-bar status "
-                     + "alone.")
+                     + "and the mic in use while you dictate, a spinner while your words are being "
+                     + "transcribed, and the speech model's progress while it loads at launch. It "
+                     + "never takes focus — turn it off to rely on the menu-bar status alone.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -218,6 +236,24 @@ private struct GeneralSettingsView: View {
     /// True when this trigger is the only one enabled (so its toggle is locked on).
     private func isOnlyEnabled(_ trigger: PushToTalkTrigger) -> Bool {
         store.settings.pttTriggers == [trigger]
+    }
+
+    /// Connected inputs, plus the pinned one if it's currently unplugged — it is still the choice.
+    private var microphoneChoices: [AudioInputDevice] {
+        guard let pinned = store.settings.preferredMicrophone,
+              !microphones.contains(where: { $0.uid == pinned.uid }) else { return microphones }
+        return microphones + [pinned]
+    }
+
+    private var microphoneSelection: Binding<String?> {
+        Binding(
+            get: { store.settings.preferredMicrophone?.uid },
+            set: { uid in
+                store.settings.preferredMicrophone = uid.flatMap { uid in
+                    microphoneChoices.first { $0.uid == uid }
+                }
+            }
+        )
     }
 
     private var languageSelection: Binding<String> {

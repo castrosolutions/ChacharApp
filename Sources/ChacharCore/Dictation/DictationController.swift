@@ -132,6 +132,15 @@ public final class DictationController {
             return
         }
 
+        // Audio arrived but every sample is exactly zero: the device is connected yet dead (see
+        // `MicrophoneCapture.isSendingSilence`). Transcribing it would only say "no speech" and
+        // blame the speaker; name the mic as the problem instead.
+        guard peak > 0 else {
+            onStatus("Mic sent no sound")
+            onPhase(.failed(Self.deadMicMessage))
+            return
+        }
+
         onStatus("… Transcribing")
         onPhase(.transcribing)
 
@@ -158,6 +167,9 @@ public final class DictationController {
         onStatus("Cancelled")
         onPhase(.cancelled)
     }
+
+    static let deadMicMessage = "The microphone sent no sound at all — pick another one from the "
+        + "indicator while recording. (A closed MacBook lid switches off the built-in mic.)"
 
     // MARK: Pipeline
 

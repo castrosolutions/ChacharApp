@@ -16,9 +16,10 @@ import SwiftUI
 /// It shows *state*, never dictated text: an earlier HUD previewed the transcription and got in
 /// the way, which is why it was disabled. Keeping content out is what lets this one stay small.
 ///
-/// The panel never takes focus (`.nonactivatingPanel`, never made key) and never takes clicks
-/// (`ignoresMouseEvents`): the whole app depends on the frontmost app *staying* frontmost, since
-/// that is where the text gets pasted.
+/// The panel never takes focus (`.nonactivatingPanel`, never made key): the whole app depends on
+/// the frontmost app *staying* frontmost, since that is where the text gets pasted. It takes clicks
+/// only where there is something to click — the recovery card, and the listening pill's mic chip
+/// (see `trackPointer()`); everywhere else they fall through to the app underneath.
 @MainActor
 final class StatusOverlayController: ObservableObject {
 
@@ -52,6 +53,12 @@ final class StatusOverlayController: ObservableObject {
 
     /// Current microphone loudness, 0…1 (wired to `MicrophoneCapture.inputLevel`).
     private let level: () -> Float
+    /// Name of the mic being recorded from (wired to `MicrophoneCapture.currentInput`).
+    private let microphone: () -> String?
+    /// Whether that mic is delivering pure digital silence (`MicrophoneCapture.isSendingSilence`).
+    private let microphoneSilent: () -> Bool
+    /// A fresh "which microphone" menu, built when the chip is clicked (see ``MicrophoneMenu``).
+    private let microphoneMenu: () -> NSMenu
     /// True when another surface is already showing model progress — the first-run setup guide has
     /// its own download row, and stacking the pill on top of it just says the same thing twice.
     private let isSuppressed: () -> Bool
@@ -72,12 +79,22 @@ final class StatusOverlayController: ObservableObject {
     private var recovery: String?
     private var meterTask: Task<Void, Never>?
     private var smoothedLevel: CGFloat = 0
+    /// Where the pill is drawn, in the panel's top-left-origin coordinates (reported by the view).
+    private var pillFrame: CGRect?
+    /// The microphone menu while it is open, so the end of the recording can close it.
+    private var openMenu: NSMenu?
     private var statusCancellable: AnyCancellable?
 
     init(status: RuntimeStatus,
          level: @escaping () -> Float,
+         microphone: @escaping () -> String?,
+         microphoneSilent: @escaping () -> Bool,
+         microphoneMenu: @escaping () -> NSMenu,
          isSuppressed: @escaping () -> Bool) {
         self.level = level
+        self.microphone = microphone
+        self.microphoneSilent = microphoneSilent
+        self.microphoneMenu = microphoneMenu
         self.isSuppressed = isSuppressed
         self.modelStatus = status.asr
         // `@Published` emits from `willSet`, so `status.asr` still holds the previous value when
@@ -100,6 +117,9 @@ final class StatusOverlayController: ObservableObject {
     /// Follow the dictation pipeline. Live phases stay on screen until the next one arrives;
     /// outcomes become a self-dismissing notice.
     func setPhase(_ next: DictationPhase) {
+        // The menu belongs to the recording: once the key is up, the paste is coming, and an open
+        // menu would be tracking the keyboard when ⌘V lands.
+        if next != .listening { openMenu?.cancelTracking() }
         switch next {
         case .idle, .listening, .transcribing, .cleaningUp:
             // A new dictation supersedes the previous one's outcome: pressing again while
@@ -160,6 +180,38 @@ final class StatusOverlayController: ObservableObject {
         render()
     }
 
+    // MARK: Microphone chip
+
+    /// Pop the microphone menu up under the pointer. The panel stays non-activating, so the app you
+    /// are dictating into keeps focus throughout.
+    func pickMicrophone() {
+        guard openMenu == nil else { return }
+        let menu = microphoneMenu()
+        openMenu = menu
+        // Off the button's action: `popUp` runs a nested tracking loop until the menu closes.
+        Task { @MainActor [weak self] in
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            self?.openMenu = nil
+        }
+    }
+
+    func notePillFrame(_ frame: CGRect) {
+        pillFrame = frame
+    }
+
+    /// Take clicks only while the pointer is over the listening pill. The panel is a large
+    /// transparent sheet (see `panelSize`), and taking clicks across all of it would swallow those
+    /// meant for the app underneath; so instead the window flips `ignoresMouseEvents` as the pointer
+    /// crosses the pill's edge. Runs on the meter tick — 30 Hz is far faster than anyone aims.
+    private func trackPointer() {
+        guard let panel, let pillFrame else { return }
+        let onPill = NSRect(x: panel.frame.minX + pillFrame.minX,
+                            y: panel.frame.maxY - pillFrame.maxY,
+                            width: pillFrame.width, height: pillFrame.height)
+            .contains(NSEvent.mouseLocation)
+        if panel.ignoresMouseEvents == onPill { panel.ignoresMouseEvents = !onPill }
+    }
+
     // MARK: State machine
 
     /// End the current dictation and leave a self-dismissing notice behind.
@@ -193,13 +245,17 @@ final class StatusOverlayController: ObservableObject {
         guard isEnabled else { return hide() }
         if let notice { return apply(notice) }
         switch phase {
-        case .listening:    return apply(.listening)
+        case .listening:    return apply(listeningContent())
         case .transcribing: return apply(.working("Transcribing…"))
         case .cleaningUp:   return apply(.working("Cleaning up…"))
         default:            break
         }
         guard !isSuppressed(), modelGraceElapsed, let loading = modelContent() else { return hide() }
         apply(loading)
+    }
+
+    private func listeningContent() -> OverlayContent {
+        .listening(microphone: microphone(), silent: microphoneSilent())
     }
 
     /// The pill for the ASR model's state, or nil when it needs no explanation.
@@ -271,9 +327,11 @@ final class StatusOverlayController: ObservableObject {
         // The two layouts need different windows: a big click-through sheet for the pill, a
         // click-taking window sized to the card. Re-lay-out whenever we cross between them.
         if !isShown || wasInteractive != content.isInteractive {
-            panel.ignoresMouseEvents = !content.isInteractive
             position(panel)
         }
+        // Click-through unless it's the card; the listening pill opens up under the pointer only
+        // (`trackPointer`).
+        panel.ignoresMouseEvents = !content.isInteractive
         guard !isShown else { return }
         panel.orderFrontRegardless() // never `makeKey`: that would steal focus from the paste target
         isShown = true
@@ -373,6 +431,11 @@ final class StatusOverlayController: ObservableObject {
         next.removeFirst()
         next.append(smoothedLevel)
         levels = next
+        // The engine opens its device a beat after the key goes down (and can be swapped
+        // mid-recording), and a dead mic only shows itself over time — so the chip is followed
+        // rather than read once.
+        if case .listening = content, content != listeningContent() { render() }
+        trackPointer()
     }
 }
 
@@ -386,7 +449,9 @@ private struct StatusOverlayHost: View {
         StatusOverlayView(content: model.content,
                           levels: model.levels,
                           onCopy: { model.copyRecovery() },
-                          onDiscard: { model.discardRecovery() })
+                          onDiscard: { model.discardRecovery() },
+                          onPickMicrophone: { model.pickMicrophone() },
+                          onPillFrame: { model.notePillFrame($0) })
     }
 }
 

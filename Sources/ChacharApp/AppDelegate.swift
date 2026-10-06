@@ -42,8 +42,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var overlay = StatusOverlayController(
         status: runtimeStatus,
         level: { [capture] in capture.inputLevel },
+        microphone: { [capture] in capture.currentInput?.name },
+        microphoneSilent: { [capture] in capture.isSendingSilence() },
+        microphoneMenu: { [microphoneMenu] in microphoneMenu.makeMenu() },
         isSuppressed: { [weak self] in self?.onboarding.isVisible ?? false }
     )
+    /// The listening pill's "which mic" menu; a choice lands in the settings store like the
+    /// Settings picker's, and `applySettings` retargets the engine.
+    private lazy var microphoneMenu = MicrophoneMenu(store: settingsStore)
+    /// Where a microphone switch restarts the engine: off the main thread (a Bluetooth mic can
+    /// take a few hundred ms to open, and the push-to-talk event tap lives on the main run loop),
+    /// and serial, so two quick picks apply in order.
+    private let micSwitchQueue = DispatchQueue(label: "app.chachar.mic-switch")
     private lazy var asrController = ASRModelController(
         store: settingsStore,
         status: runtimeStatus,
@@ -141,9 +151,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 1) Touch the mic once to prompt the Microphone permission on first run. Keep it warm
         //    unless the user wants it open only while dictating (then release it right away).
+        //    The engine isn't running yet, so pinning the user's mic first can't throw. Opened off
+        //    the main thread: Core Audio calls can stall (a Bluetooth reroute takes ~1 s, and a
+        //    wedged audio framework once blocked forever), and on main that freezes the whole app.
+        try? capture.setPreferredInput(uid: settingsStore.settings.preferredMicrophone?.uid)
+        let capture = capture
+        let micOnly = settingsStore.settings.micOnlyWhileDictating
         do {
-            try capture.start()
-            if settingsStore.settings.micOnlyWhileDictating { capture.stop() }
+            try await Task.detached {
+                try capture.start()
+                if micOnly { capture.stop() }
+            }.value
             chacharLog("mic engine started, running=\(capture.running)")
         } catch {
             setStatus("Mic error")
@@ -391,11 +409,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Apply immediately: release the warm mic now, or re-warm it.
             if settings.micOnlyWhileDictating { capture.stop() } else { startWarmMic() }
         }
+        if previous.preferredMicrophone != settings.preferredMicrophone {
+            switchMicrophone(to: settings.preferredMicrophone)
+        }
         if previous.historyRetentionLimit != settings.historyRetentionLimit,
            settings.historyRetentionLimit > 0 {
             let limit = settings.historyRetentionLimit
             let store = history
             Task.detached { store.trim(keepingLast: limit) }
+        }
+    }
+
+    /// Retarget the engine at the chosen mic (nil = follow the system default). Immediate when the
+    /// mic is open — even mid-dictation, where the recording simply carries on through the new
+    /// device; otherwise remembered for the next open.
+    private func switchMicrophone(to device: AudioInputDevice?) {
+        let capture = capture
+        micSwitchQueue.async {
+            do {
+                try capture.setPreferredInput(uid: device?.uid)
+            } catch {
+                // The next push-to-talk press retries the open, as after any failed start.
+                Task { @MainActor in
+                    chacharLog("mic switch FAILED: \(error)")
+                    self.flash("Couldn't switch the microphone: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
