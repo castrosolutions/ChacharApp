@@ -224,6 +224,9 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       (Core Audio UID, system default untouched) so macOS switching inputs on its own (AirPods
       connecting) no longer changes the dictation mic. Unplugged → the system default stands in
       until it returns. Also in Settings → General → Microphone.
+- [x] **Relaunch from the status menu** — "Relaunch ChacharApp" (⌘R) quits and reopens the app
+      for when something wedges; a detached shell waits for the exit (force-killing after 5 s if
+      quitting itself hangs) and then reopens the same bundle, so TCC grants are kept.
 - [x] **Hands-free PTT mode** (optional) — press to start, press again to stop. Default is
       classic hold-to-talk (record only while held).
 - [x] **Status overlay** — a floating, click-through pill at the bottom of the active screen that
