@@ -571,6 +571,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(about)
 
         menu.addItem(.separator())
+        let relaunch = NSMenuItem(title: "Relaunch ChacharApp", action: #selector(relaunch), keyEquivalent: "r")
+        relaunch.target = self
+        menu.addItem(relaunch)
         menu.addItem(NSMenuItem(title: "Quit ChacharApp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         item.menu = menu
@@ -598,6 +601,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openOnboarding() {
         onboarding.show()
+    }
+
+    /// Quit and start again — the way out when something wedges (a mic that won't come back, a
+    /// stuck pipeline) without making the user find the app in Finder.
+    ///
+    /// A detached shell waits for this process to exit before reopening the bundle: `open` on an
+    /// app that is still running would only re-activate it. If quitting itself hangs, the shell
+    /// force-kills it after 5 s — a relaunch is mostly needed when the app is *already* in a bad
+    /// state. TCC grants are unaffected: it is the same signed bundle at the same path.
+    @objc private func relaunch() {
+        let script = """
+        i=0
+        while kill -0 "$1" 2>/dev/null; do
+          i=$((i+1))
+          [ "$i" -eq 50 ] && kill -9 "$1" 2>/dev/null
+          [ "$i" -ge 100 ] && break
+          sleep 0.1
+        done
+        exec /usr/bin/open "$2"
+        """
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = ["-c", script, "relaunch",
+                            String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundlePath]
+        do {
+            try helper.run()
+        } catch {
+            chacharLog("relaunch helper FAILED to start: \(error)")
+            flash("Couldn't relaunch: \(error.localizedDescription)")
+            return
+        }
+        chacharLog("relaunching")
+        NSApp.terminate(nil)
     }
 
     @objc private func openWebsite() {
