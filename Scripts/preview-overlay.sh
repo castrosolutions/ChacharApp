@@ -31,8 +31,10 @@ let speechLevels: [CGFloat] = (0..<27).map { i in
 }
 
 let states: [(String, OverlayContent, [CGFloat])] = [
-    ("1-listening", .listening, speechLevels),
-    ("2-listening-quiet", .listening, Array(repeating: 0.02, count: 27)),
+    ("1-listening", .listening(microphone: "MacBook Pro Microphone"), speechLevels),
+    ("2-listening-quiet", .listening(microphone: "Juan Pablo’s AirPods Pro – Find My"), Array(repeating: 0.02, count: 27)),
+    ("2b-listening-no-mic-yet", .listening(microphone: nil), speechLevels),
+    ("2c-listening-dead-mic", .listening(microphone: "Micrófono del MacBook Pro", silent: true), Array(repeating: 0, count: 27)),
     ("3-transcribing", .working("Transcribing…"), []),
     ("4-cleaning-up", .working("Cleaning up…"), []),
     ("5-model-loading", .working("Loading the speech model…"), []),

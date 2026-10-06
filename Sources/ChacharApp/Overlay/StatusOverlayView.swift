@@ -3,8 +3,10 @@ import SwiftUI
 /// What the floating pill is showing. Owned by ``StatusOverlayController``, rendered by
 /// ``StatusOverlayView``.
 enum OverlayContent: Equatable {
-    /// Recording: live level meter + "Listening…".
-    case listening
+    /// Recording: live level meter + "Listening…", and the mic it is listening through (nil until
+    /// the engine has opened one) — a chip that opens the microphone menu. `silent` flags a mic
+    /// delivering pure digital silence, i.e. connected but dead.
+    case listening(microphone: String?, silent: Bool = false)
     /// Indeterminate work with a label ("Transcribing…", "Cleaning up…").
     case working(String)
     /// Determinate progress (0…1) with a label — the first-run model download.
@@ -15,7 +17,9 @@ enum OverlayContent: Equatable {
     /// The only content that is interactive, and the only one that never dismisses itself.
     case recovery(String)
 
-    /// Whether this content has buttons — which decides whether the panel takes clicks at all.
+    /// Whether this content is laid out as the click-taking card — which sizes the panel to it.
+    /// The listening pill's mic chip takes clicks too, but without that: see
+    /// `StatusOverlayController.trackPointer()`.
     var isInteractive: Bool {
         if case .recovery = self { return true }
         return false
@@ -32,8 +36,8 @@ enum OverlayNotice: Equatable { case success, info, failure }
 /// every appearance can be rendered in isolation (see `Scripts/preview-overlay.sh`). The live
 /// wiring is one thin `@ObservedObject` wrapper in ``StatusOverlayController``.
 ///
-/// Drawn inside a transparent, click-through panel, so everything here is decoration: nothing is
-/// interactive, and nothing may grow past `contentWidth`.
+/// Drawn inside a transparent, click-through panel, so nothing may grow past `contentWidth`. The
+/// only live controls are the recovery card's buttons and the listening pill's mic chip.
 struct StatusOverlayView: View {
     let content: OverlayContent?
     let levels: [CGFloat]
@@ -41,6 +45,11 @@ struct StatusOverlayView: View {
     var onCopy: () -> Void = {}
     /// Throw the rescued text away and close the card.
     var onDiscard: () -> Void = {}
+    /// Open the microphone menu. Only reachable from ``OverlayContent/listening(microphone:)``.
+    var onPickMicrophone: () -> Void = {}
+    /// The pill's frame in the panel's (top-left-origin) coordinates, reported as it changes, so the
+    /// controller knows where the pointer may click through and where it may not.
+    var onPillFrame: (CGRect) -> Void = { _ in }
 
     /// Width proposed to the pill. It caps where long messages wrap while leaving short ones free
     /// to hug their content — the pill is *centred* in this box, not stretched to fill it.
@@ -91,6 +100,7 @@ struct StatusOverlayView: View {
             .frame(minWidth: 160)
             .background(pillBackground)
             .shadow(color: .black.opacity(0.32), radius: 14, y: 5)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onPillFrame($0) }
     }
 
     /// Material for the native blur, then a black wash so white text stays legible over a bright
@@ -107,11 +117,14 @@ struct StatusOverlayView: View {
     @ViewBuilder
     private func body(for content: OverlayContent) -> some View {
         switch content {
-        case .listening:
-            HStack(spacing: 14) {
-                LevelMeter(levels: levels, tint: Self.liveTint)
-                label("Listening…")
-                cancelHint
+        case .listening(let microphone, let silent):
+            VStack(spacing: 9) {
+                HStack(spacing: 14) {
+                    LevelMeter(levels: levels, tint: Self.liveTint)
+                    label("Listening…")
+                    cancelHint
+                }
+                if let microphone { microphoneChip(microphone, silent: silent) }
             }
         case .working(let text):
             HStack(spacing: 12) {
@@ -155,6 +168,42 @@ struct StatusOverlayView: View {
                 .lineLimit(1)
         }
         .fixedSize() // never let the hint wrap or squeeze — it shrinks the meter instead
+    }
+
+    /// Which mic is live, and the way to change it. macOS switches its default input on its own
+    /// (AirPods connecting is the classic), and nothing in the recording said so — you found out
+    /// from a muffled transcription. Quiet like the ESC hint: the meter still reads first — unless
+    /// the mic is dead, which turns the chip amber and says so, since that is the one thing worth
+    /// interrupting a recording for.
+    private func microphoneChip(_ name: String, silent: Bool) -> some View {
+        Button(action: onPickMicrophone) {
+            HStack(spacing: 6) {
+                Image(systemName: silent ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(name)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if silent {
+                    Text("· no sound — switch mic")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            .foregroundStyle(silent ? Self.warningTint : .white.opacity(0.7))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background {
+                Capsule().fill(Color.white.opacity(0.08))
+                Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Recovery card

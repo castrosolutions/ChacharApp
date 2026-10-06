@@ -337,6 +337,23 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(harness.recorder.phases, [.listening, .noSpeech])
     }
 
+    /// A mic that delivers audio made only of exact zeros is connected but dead (a closed MacBook
+    /// lid, a sleeping Continuity iPhone). That must be reported as a mic failure naming the fix —
+    /// not transcribed, which would only end in "no speech" and blame the speaker.
+    @MainActor
+    func testDigitalSilenceIsReportedAsDeadMicNotTranscribed() async {
+        let harness = makeHarness(options: Self.options(micOnlyWhileDictating: true),
+                                  capture: FakeCapture(samples: [Float](repeating: 0, count: 16_000)))
+        await pressAndAwaitStartAttempt(harness)
+        harness.controller.release()
+
+        XCTAssertEqual(harness.transcriber.transcribeCalls, 0, "dead-mic audio must not be transcribed")
+        XCTAssertEqual(harness.recorder.phases, [.listening, .failed(DictationController.deadMicMessage)])
+        XCTAssertEqual(harness.recorder.statuses.last, "Mic sent no sound")
+        XCTAssertTrue(harness.injector.injected.isEmpty)
+        XCTAssertTrue(harness.history.load().isEmpty)
+    }
+
     /// A transcription that survives the correction layers as pure whitespace also ends at
     /// `.noSpeech`: the pipeline ran to completion, but nothing reached the focused app.
     @MainActor

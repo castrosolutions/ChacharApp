@@ -20,6 +20,11 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// the cost of the indicator staying on. Default true (privacy-friendly: the indicator only
     /// appears while you dictate); flip it off in Settings for the fastest, always-warm response.
     var micOnlyWhileDictating: Bool = true
+    /// The microphone to dictate with; nil follows the system default input. Stored with its name
+    /// so a pinned mic that is currently unplugged can still be shown (and un-pinned) by name.
+    /// Pinning is what keeps dictation on the same mic when macOS switches its default — AirPods
+    /// connecting, a display with a mic docking.
+    var preferredMicrophone: AudioInputDevice?
     /// Show the floating status pill (recording level meter, transcription spinner, model-loading
     /// progress). On by default: those waits are otherwise invisible. Off leaves only the menu-bar
     /// status line — dictation itself is unaffected.
@@ -73,6 +78,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         pttTriggers = try container.decodeIfPresent(Set<PushToTalkTrigger>.self, forKey: .pttTriggers) ?? defaults.pttTriggers
         pttToggleMode = try container.decodeIfPresent(Bool.self, forKey: .pttToggleMode) ?? defaults.pttToggleMode
         micOnlyWhileDictating = try container.decodeIfPresent(Bool.self, forKey: .micOnlyWhileDictating) ?? defaults.micOnlyWhileDictating
+        preferredMicrophone = try container.decodeIfPresent(AudioInputDevice.self, forKey: .preferredMicrophone)
         showStatusOverlay = try container.decodeIfPresent(Bool.self, forKey: .showStatusOverlay) ?? defaults.showStatusOverlay
         // asrLanguage is itself optional (nil = auto-detect), so distinguish "absent" from "null".
         asrLanguage = container.contains(.asrLanguage)

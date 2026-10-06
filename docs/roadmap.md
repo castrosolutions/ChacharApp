@@ -219,6 +219,11 @@ acoustic — so the lever is biasing, not voice fine-tuning.
 - [x] **Microphone privacy mode** — setting to open the mic only while the PTT key is held, so
       macOS's "mic in use" indicator shows only while dictating (default) vs always-warm for lowest
       latency. Mic engine start/stop runs off the event-tap thread so it never stalls key handling.
+- [x] **Choose the microphone from the recording itself** — the listening pill names the mic
+      in use and opens a device menu on click; the choice pins that input for ChacharApp only
+      (Core Audio UID, system default untouched) so macOS switching inputs on its own (AirPods
+      connecting) no longer changes the dictation mic. Unplugged → the system default stands in
+      until it returns. Also in Settings → General → Microphone.
 - [x] **Hands-free PTT mode** (optional) — press to start, press again to stop. Default is
       classic hold-to-talk (record only while held).
 - [x] **Status overlay** — a floating, click-through pill at the bottom of the active screen that
