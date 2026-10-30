@@ -120,8 +120,8 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       set up; `Scripts/release.sh` builds the stripped, hardened, signed, **notarized + stapled `.dmg`**
       end-to-end (first 0.0.1 build notarized). `Scripts/upload-r2.sh` publishes it. *(These
       maintainer scripts are kept local, not in the public repo — see `.gitignore`.)*
-- [ ] **Publish the first release**: the notarized **1.7.0 `.dmg` is live on R2** at
-      `https://dl.juanpablocastro.com/releases/1.7.0/ChacharApp-1.7.0.dmg`. First-run fixes found
+- [ ] **Publish the first release**: the notarized **1.7.1 `.dmg` is live on R2** at
+      `https://dl.juanpablocastro.com/releases/1.7.1/ChacharApp-1.7.1.dmg`. First-run fixes found
       by clean-install testing: 1.1.0 added the setup guide; 1.1.1 the missing microphone
       entitlement (a hardened-runtime app without `com.apple.security.device.audio-input` is
       denied the mic silently — no prompt, no row in System Settings); 1.1.2 made the mic-grant
@@ -181,7 +181,9 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       the mic in use and switches it on click, pinned for ChacharApp only (an `AVCaptureSession` on
       that device, since forcing a non-default device into `AVAudioEngine` starved the tap and could
       wedge AVFAudio) — flags a connected-but-dead mic (closed MacBook lid) instead of reporting "no
-      speech", and adds **Relaunch ChacharApp** to the status menu.
+      speech", and adds **Relaunch ChacharApp** to the status menu. 1.7.1 stopped a false "Nowhere
+      to insert this" in Chromium/Electron apps, whose dormant Accessibility tree hid the focused
+      text field from the focus probe.
       Published at
       **github.com/castrosolutions/ChacharApp** with the `.dmg` attached as a GitHub release,
       mirroring R2 (ADR 0002 D3). Remaining: validate the first-download path from a fresh macOS
