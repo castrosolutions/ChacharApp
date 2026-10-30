@@ -250,6 +250,12 @@ acoustic — so the lever is biasing, not voice fine-tuning.
       it positively recognises as untypeable, so an unfamiliar toolkit can never cost a paste that
       works today; when there is nowhere to insert, the overlay holds the text on screen with
       Copy / Discard until the user acts. The verdict is logged under `CHACHARAPP_DEBUG`.
+      **1.7.1** fixed a false "Nowhere to insert this" in Chromium/Electron apps (user report,
+      macOS 26.6.2): their dormant Accessibility tree makes the system-wide focus query answer
+      `noValue` even with a focused text field, which the probe read as "nothing focused". It
+      now asks the frontmost app directly (waking Chromium's tree via `AXManualAccessibility`)
+      and treats a still-missing element as `unknown` → paste; the log carries the raw AX
+      answers.
 - [ ] Error handling: model download failure, low disk, model load failure, missing permissions.
 - [ ] Phase 2 **WER spike** — quantify accuracy on a small personal set to track regressions.
 

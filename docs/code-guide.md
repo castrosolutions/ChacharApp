@@ -696,13 +696,25 @@ Two consequences follow, and they are the parts worth not "simplifying" later:
   fields, web `contenteditable` areas and terminal emulators all have in common, while
   their roles agree on almost nothing.
 
-The one case that needs no guessing at all is the one that prompted this: nothing anywhere
-holds keyboard focus (the Desktop, a window that was just closed), where the system-wide
-focus query returns `noValue` outright.
+- **"No focused element" is never a refusal.** It refuses only after *seeing* an element.
+  Chromium and Electron apps (Chrome, Slack, VS Code, Claude, Notion…) keep their
+  Accessibility tree dormant until an assistive client wakes it, and until then the
+  system-wide focus query answers `noValue` *with the caret in a text field*. 1.5.0–1.7.0
+  read that as "nothing focused" and blocked every dictation in those apps — but only on
+  machines where no other assistive tool (Raycast, a password manager, a window manager…)
+  had already woken the tree, which is why it never reproduced on the maintainer's Mac.
+  Now a `noValue` makes the probe ask the frontmost app directly, set Chromium's
+  `AXManualAccessibility` switch on it and ask once more (no sleep — latency matters more
+  than the verdict); whatever is still missing is `unknown`, and the paste goes ahead.
+  Setting the switch also makes later probes in that app answer on the first query.
 
-Because this decision depends on *other* apps' Accessibility trees, `inject` logs the
-verdict on every insertion under `CHACHARAPP_DEBUG` — when a paste misbehaves in some app,
-what the probe saw is always the first question (`~/chachar-diag.log`).
+The decision itself (`decide` / `classify`) is pure and unit-tested with canned AX answers
+(`FocusedTextTargetTests`); `probe()` only does the Accessibility reads.
+
+Because this decision depends on *other* apps' Accessibility trees, the probe logs its
+verdict *and the raw AX answers behind it* (system-wide error code, frontmost app, role) on
+every insertion under `CHACHARAPP_DEBUG` — when a paste misbehaves in some app, what the
+probe saw is always the first question (`~/chachar-diag.log`).
 
 Two guard-rails around the trick itself: the dictated text is marked with
 `org.nspasteboard.ConcealedType` (the nspasteboard.org convention), so clipboard managers

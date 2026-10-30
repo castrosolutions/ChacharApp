@@ -54,12 +54,9 @@ public final class PasteboardInjector: TextInjector {
         // nothing about, so without this the app would announce an insertion that never happened
         // — and would clobber the user's clipboard on the way (see `restore`, which only puts it
         // back if nobody else wrote meanwhile).
-        let verdict = focusProbe()
-        // Logged on every insertion (only with CHACHARAPP_DEBUG): this is the one decision here
-        // that depends on other apps' Accessibility trees, so when a paste misbehaves in some app
-        // the first question is always what the probe saw.
-        chacharLog("focus probe: \(verdict)")
-        guard verdict != .none else { return .noTextTarget }
+        // The probe logs what it saw and why (only with CHACHARAPP_DEBUG): this is the one
+        // decision here that depends on other apps' Accessibility trees.
+        guard focusProbe() != .none else { return .noTextTarget }
 
         let pasteboard = NSPasteboard.general
         let saved = snapshot(pasteboard)
